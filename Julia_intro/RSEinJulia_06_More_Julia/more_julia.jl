@@ -40,6 +40,93 @@ function Base.getindex(D::MyDiagonal, i::Int, j::Int)
     end
 end
 
+# ╔═╡ 85f2f6cf-7dee-4950-8a1f-e30ad4b5f91d
+function Base.setindex!(D::MyDiagonal, v, i::Int, j::Int)
+	@boundscheck checkbounds(D, i, j)
+	# We are safe after the check above and could consider
+	# adding `@inbounds` below
+    if i == j
+        D.diag[i] = v
+    else
+        throw(ArgumentError("cannot set off-diagonal entry ($i, $j)"))
+    end
+    return v
+end
+
+# ╔═╡ b9947122-6c32-4e3a-940b-b930389e7de0
+D1 = MyDiagonal([1, 2, 3, 4, 5])
+
+# ╔═╡ d64d35a9-beaa-4a02-8db8-72af88996f6b
+D1[1, 2]
+
+# ╔═╡ 317d1729-8090-41d5-aaaf-eea5e26133d0
+D1[3, 3]
+
+# ╔═╡ 42e569d8-5904-4d8e-8024-d5cd288f7f8c
+D1[3, 6]
+
+# ╔═╡ 99389368-d6de-4c11-9c67-0dd3210cc43f
+D1^2
+
+# ╔═╡ b144cd88-56b0-4445-933c-a52d0e63651d
+D1 * [0.0, 0.25, 0.5, 0.75, 1.0]
+
+# ╔═╡ 50503fb0-6677-4484-b879-78ec7356a4bd
+eigvals(D1)
+
+# ╔═╡ 7a4db75a-e20a-48c5-9d10-de0106606642
+exp(D1)
+
+# ╔═╡ 57e1b5e8-9ee0-4825-9bec-5413f432fd4d
+exp.(D1)
+
+# ╔═╡ 9ef5f1dc-5236-4365-889a-9c622d2d4c43
+D1 + D1
+
+# ╔═╡ 4922ba18-d1d2-40ec-aee7-056c3ce803e6
+# Base.:+(D1::MyDiagonal, D2::MyDiagonal) = MyDiagonal(D1.diag + D2.diag)
+
+# ╔═╡ ff1116bd-7496-42ca-93e2-799e0bc08398
+D2 = Diagonal(diag(D1))
+
+# ╔═╡ b7b9a6e7-f570-489e-80bc-44ca8bf834b4
+eigvals(D2)
+
+# ╔═╡ eea202b2-d89f-422f-9006-5f548f55c6ce
+@benchmark eigvals(D1)
+
+# ╔═╡ 2f99de8f-cad5-4e76-be9b-aea5fcb22722
+@benchmark eigvals(D2)
+
+# ╔═╡ cd66cb76-72a6-4904-afcd-18ac9f21d196
+# LinearAlgebra.eigvals(D::MyDiagonal) = copy(D.diag)
+
+# ╔═╡ bc99c3cf-8e22-4d3e-b0b2-1790869042b6
+# this needs to be written!
+struct OneHotVector{T} <: AbstractVector{T}
+	pos::Int
+	len::Int
+end
+
+# ╔═╡ 144a55da-6e10-45e5-8e82-f71622c68fa4
+Base.size(ov::OneHotVector) = (ov.len, 1)
+
+# ╔═╡ 9f73a339-27b2-4904-9752-4aa6f97b075a
+let
+	b = rand(size(D1, 2))
+	x = D1 \ b
+	D1 * x - b
+end
+
+# ╔═╡ 9fd90ba9-02a4-42cd-93cb-3f7fbd48de6e
+#function Base.getindex(ov::OneHotVector{T}, i::Int, j::Int) where T
+	#	return (i == ov.pos && j == 1) ? one(T) : zero(T)
+	#end
+	
+function Base.getindex(ov::OneHotVector, i::Int)
+	return (i == ov.pos) ? one(eltype(ov)) : zero(eltype(ov))
+end
+
 # ╔═╡ a2181260-e6cd-11ea-2a69-8d9d31d1ef0e
 md"""
 # More Julia
@@ -65,88 +152,20 @@ Here, we create a new Julia struct representing a diagonal matrix.
 # ╔═╡ 2ed1b75c-c17c-48a6-8350-3a0370991a92
 md"Before being able to use it, we need to define some interface functions. For example, have a look at the [abstract array interface](https://docs.julialang.org/en/v1/manual/interfaces/#man-interface-array) in the Julia documentation."
 
-# ╔═╡ 85f2f6cf-7dee-4950-8a1f-e30ad4b5f91d
-function Base.setindex!(D::MyDiagonal, v, i::Int, j::Int)
-	@boundscheck checkbounds(D, i, j)
-	# We are safe after the check above and could consider
-	# adding `@inbounds` below
-    if i == j
-        D.diag[i] = v
-    else
-        throw(ArgumentError("cannot set off-diagonal entry ($i, $j)"))
-    end
-    return v
-end
-
 # ╔═╡ 642eec59-dbbb-46ef-a578-0c1bcb810208
 md"Now, we can use our new struct as every matrix type in Julia."
-
-# ╔═╡ b9947122-6c32-4e3a-940b-b930389e7de0
-D1 = MyDiagonal([1, 2, 3, 4, 5])
-
-# ╔═╡ d64d35a9-beaa-4a02-8db8-72af88996f6b
-D1[1, 2]
-
-# ╔═╡ 317d1729-8090-41d5-aaaf-eea5e26133d0
-D1[3, 3]
-
-# ╔═╡ 42e569d8-5904-4d8e-8024-d5cd288f7f8c
-D1[3, 6]
-
-# ╔═╡ 99389368-d6de-4c11-9c67-0dd3210cc43f
-D1^2
-
-# ╔═╡ b144cd88-56b0-4445-933c-a52d0e63651d
-D1 * [0.0, 0.25, 0.5, 0.75, 1.0]
-
-# ╔═╡ 9f73a339-27b2-4904-9752-4aa6f97b075a
-let
-	b = rand(size(D1, 2))
-	x = D1 \ b
-	D1 * x - b
-end
-
-# ╔═╡ 50503fb0-6677-4484-b879-78ec7356a4bd
-eigvals(D1)
-
-# ╔═╡ 7a4db75a-e20a-48c5-9d10-de0106606642
-exp(D1)
-
-# ╔═╡ 57e1b5e8-9ee0-4825-9bec-5413f432fd4d
-exp.(D1)
-
-# ╔═╡ 9ef5f1dc-5236-4365-889a-9c622d2d4c43
-D1 + D1
 
 # ╔═╡ 70f11e33-c1c8-422a-ab46-4505ed15b81d
 md"As you see above, the return type of the addition of two of our diagonal matrices is a standard matrix. We can of course specialize this."
 
-# ╔═╡ 4922ba18-d1d2-40ec-aee7-056c3ce803e6
-# Base.:+(D1::MyDiagonal, D2::MyDiagonal) = MyDiagonal(D1.diag + D2.diag)
-
 # ╔═╡ 32bed11a-79d0-4daa-8128-1e4681f2c1af
 md"These operations all rely on generic fallbacks implemented in Julia. Thus, they can be less efficient than specialized methods using knowledge about diagonal matrices. For example, let's compare the performance of calculating the eigenvalues of our own struct and the `Diagonal` matrix type implemented in the Julia standard library LinearAlgebra."
-
-# ╔═╡ ff1116bd-7496-42ca-93e2-799e0bc08398
-D2 = Diagonal(diag(D1))
 
 # ╔═╡ bc8c5b3d-1511-459d-9a9a-691c9a320960
 md"Note that the standard `Diagonal` type has a specialized pretty printing. We could of course write something similar for our own struct."
 
-# ╔═╡ b7b9a6e7-f570-489e-80bc-44ca8bf834b4
-eigvals(D2)
-
-# ╔═╡ eea202b2-d89f-422f-9006-5f548f55c6ce
-@benchmark eigvals(D1)
-
-# ╔═╡ 2f99de8f-cad5-4e76-be9b-aea5fcb22722
-@benchmark eigvals(D2)
-
 # ╔═╡ 3e1eaa18-4c9b-4817-8005-6b08783cdc02
 md"We can achieve the same performance improvement for our own struct by specializing `eigvals` appropriately."
-
-# ╔═╡ cd66cb76-72a6-4904-afcd-18ac9f21d196
-# LinearAlgebra.eigvals(D::MyDiagonal) = copy(D.diag)
 
 # ╔═╡ ea716adf-7782-44b2-a330-0424c820c713
 md"""
@@ -164,24 +183,17 @@ See also the [Wikipedia entry](https://en.wikipedia.org/wiki/One-hot).
 # ╔═╡ 099d9776-4da5-4a7b-b92b-1b3351551b83
 md"👉 Write a Julia struct encoding such a one-hot vector efficiently."
 
-# ╔═╡ bc99c3cf-8e22-4d3e-b0b2-1790869042b6
-# this needs to be written!
-struct OneHotVector{p,l} <: AbstractMatrix{l}
-	p::Int
-	l::Int
-end
-
-# ╔═╡ 44585883-ddaf-46db-b30b-2da8b3f9f941
-
-
-# ╔═╡ deac4d31-c01b-4013-a340-b5072148c3ad
+# ╔═╡ 365df1ee-240e-44bf-aab4-ebec8a919a64
 md"👉 You may insert additional cells here to specialize the interface functions."
 
 # ╔═╡ 8ba56725-be08-4562-8a51-ed3be8bc9ea8
 md"👉 Create a variable `v` as a `OneHotVector` of length 10 with 1 at position 3."
 
-# ╔═╡ 522983b1-3633-40db-9ddf-6263eb4de027
-v = OneHotVector(3,10)
+# ╔═╡ 7a33e69c-91e8-4a22-ac29-d10fbf509467
+v = OneHotVector{Float64}(3,10)
+
+# ╔═╡ 916475e9-132e-4a6b-bd67-05bba8ca1a73
+getindex(v,3)
 
 # ╔═╡ ad116d8e-9286-40f8-9c7f-b0be6d3cdea7
 if !@isdefined(OneHotVector)
@@ -668,10 +680,12 @@ version = "17.4.0+0"
 # ╟─ea716adf-7782-44b2-a330-0424c820c713
 # ╟─099d9776-4da5-4a7b-b92b-1b3351551b83
 # ╠═bc99c3cf-8e22-4d3e-b0b2-1790869042b6
-# ╠═44585883-ddaf-46db-b30b-2da8b3f9f941
-# ╟─deac4d31-c01b-4013-a340-b5072148c3ad
+# ╠═365df1ee-240e-44bf-aab4-ebec8a919a64
+# ╠═144a55da-6e10-45e5-8e82-f71622c68fa4
+# ╠═9fd90ba9-02a4-42cd-93cb-3f7fbd48de6e
 # ╟─8ba56725-be08-4562-8a51-ed3be8bc9ea8
-# ╠═522983b1-3633-40db-9ddf-6263eb4de027
+# ╠═7a33e69c-91e8-4a22-ac29-d10fbf509467
+# ╠═916475e9-132e-4a6b-bd67-05bba8ca1a73
 # ╟─ad116d8e-9286-40f8-9c7f-b0be6d3cdea7
 # ╟─22b476d3-0338-4cfe-b767-2105fdd61122
 # ╟─00000000-0000-0000-0000-000000000001
