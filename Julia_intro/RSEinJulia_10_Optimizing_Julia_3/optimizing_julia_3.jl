@@ -79,7 +79,13 @@ md"👉 Implement the Fibonacci sequence in the function `fibonacci` below and i
 # ╔═╡ 2cd8a714-d8f8-404a-bf82-6433c403abf6
 function fibonacci(n::Integer)
 	# TODO
-	return missing
+	fn1 = one(n)
+	fn2 = one(n)
+	for i in 3:n
+		fn1,fn2=fn1+fn2,fn1
+	end
+	
+	return fn1
 end
 
 # ╔═╡ e04fa354-8319-4ac0-8a9f-a9ee6898bf3c
@@ -133,7 +139,7 @@ function run_simulations(n::Int, k::Int, n_simulations::Int)::Float64
     ideal = collect(1:n)
 
     function did_k_matches_occur_in_the_simulation()::Bool
-        shuffle!(hats)
+        shuffle!(hats) #random inplace permute built-in function
         sum(hats .== ideal) == k
     end
 
@@ -155,15 +161,14 @@ function run_simulations_modified(n::Int, k::Int, n_simulations::Int)::Float64
     # n_simulations: number of simulations to run
 
     hats = collect(1:n)
-    ideal = collect(1:n)
+    ideal = 1:n
 
     function did_k_matches_occur_in_the_simulation()::Bool
         shuffle!(hats)
-        sum(hats .== ideal) == k
+        count(splat(==), zip(hats, ideal)) == k# had to lookup how to replace sum(hats .== ideal) == k
     end
 
-    sum((did_k_matches_occur_in_the_simulation() for _ in 1:n_simulations)) / 
-		n_simulations
+    mean((did_k_matches_occur_in_the_simulation() for _ in 1:n_simulations))
 end
 
 # ╔═╡ 0e0f0694-2ba8-4c89-8d93-b3807d92bec9
@@ -198,7 +203,7 @@ end
 run_rigorous_simulations()
 
 # ╔═╡ 73894d37-cdae-48b0-a1dc-92fb410f8b2e
-# @profview run_simulations(1000, 0, 100_000)
+@profview run_simulations(1000, 0, 100_000)
 
 # ╔═╡ 6a3458b0-731e-467a-993d-af19d328aa53
 md"""
@@ -253,14 +258,14 @@ from the Julia manual."
 md"👉 Hint: You may consider using [FastPow.jl](https://github.com/JuliaMath/FastPow.jl)."
 
 # ╔═╡ 476678ec-f9cd-4250-ba71-6b92cd6fd051
-function md_model_modified(ʋᵢ::Float64, rᵢ::Float64, n::Int64)
+@fastpow function md_model_modified(ʋᵢ::Float64, rᵢ::Float64, n::Int64)
 	rʋ = Array{Float64, 2}(undef, n, 2)
-	for i = 1:n
+	for i in axes(rʋ,2) #column major
 		ʋᵢ = ʋᵢ + Δt/2*(F(rᵢ)/m)
 		rᵢ₊₁ = rᵢ + Δt*ʋᵢ
 		ʋᵢ₊₁ = ʋᵢ + Δt/2*(F(rᵢ₊₁)/m)
-		rʋ[i, 1] = rᵢ = rᵢ₊₁
-		rʋ[i, 2] = ʋᵢ = ʋᵢ₊₁
+		rʋ[1, i] = rᵢ₊₁
+		rʋ[2, i] =ʋᵢ₊₁
 	end
 	return rʋ
 end
@@ -333,7 +338,7 @@ ProfileView = "~1.7.2"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.4"
+julia_version = "1.9.3"
 manifest_format = "2.0"
 project_hash = "ab874a970be5f68c71aec446e0bde30d312c7377"
 
@@ -784,12 +789,12 @@ version = "0.2.0"
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
 uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
-version = "0.6.4"
+version = "0.6.3"
 
 [[deps.LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
-version = "8.4.0+0"
+version = "7.84.0+0"
 
 [[deps.LibGit2]]
 deps = ["Base64", "NetworkOptions", "Printf", "SHA"]
@@ -798,7 +803,7 @@ uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
 [[deps.LibSSH2_jll]]
 deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
 uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
-version = "1.11.0+1"
+version = "1.10.2+0"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -846,7 +851,7 @@ uuid = "4b2f31a3-9ecc-558c-b454-b3730dcb73e9"
 version = "2.35.0+0"
 
 [[deps.Librsvg_jll]]
-deps = ["Artifacts", "JLLWrappers", "Libdl", "Pango_jll", "Pkg", "gdk_pixbuf_jll"]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pango_jll", "Pkg", "XML2_jll", "gdk_pixbuf_jll"]
 git-tree-sha1 = "ae0923dab7324e6bc980834f709c4cd83dd797ed"
 uuid = "925c91fb-5dd6-59dd-8e8c-345e74382d89"
 version = "2.54.5+0"
@@ -1566,7 +1571,7 @@ version = "1.3.7+1"
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
-version = "1.52.0+1"
+version = "1.48.0+0"
 
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
