@@ -84,6 +84,13 @@ md"👉 Write a Julia function computing the sum $C_{ij} = A_{ij} + B_{ij}$ of t
 # ╔═╡ e7b4e598-7250-40e8-84c6-07110dec14e6
 function mysum!(C, A, B)
 	# TODO: Implement
+	# @. C=A+B
+	for i in 1:size(A,1)
+		#C[i,:] = A[i,:] + B[i,:]
+		for j in 1:size(A,2)
+			C[i,j] = A[i,j] + B[i,j]
+		end
+	end
 	return C
 end
 
@@ -226,25 +233,24 @@ step(u, h, A) = inv(I - h * A) * u
 
 # ╔═╡ 07d6bb79-d22c-4cec-870e-b15d63903030
 function integrate(h)
-	u0 = [1.0, 0.0]
+	u = [1.0, 0.0]
 	A = [0.0 -1.0; 1.0 0.0]
 	t_end = 1.0
 	
 	t = 0.0
-	dt = h
-	u = copy(u0)
 	while t < t_end
-		if t + dt > t_end
-			dt = t_end - t
+		if t + h > t_end
+			h = t_end - t
 		end
 
-		u = step(u, dt, A)
-		t = t + dt
+		u = step(u, h, A)
+		t += h
 	end
 
 	# Compute the error of the numerical solution
-	return norm(u - exp(A * t_end) * u0)
+	return norm(u - exp(A * t_end) * [1.0,0.0])
 end
+
 
 # ╔═╡ 7aa1aaed-b56b-4760-b1ff-639309aef4d9
 let
@@ -255,8 +261,33 @@ let
 			xscale = :log10, yscale = :log10)
 end
 
-# ╔═╡ ebe3f8e6-04c0-4e25-8469-e31c6c166a81
+# ╔═╡ 8888b885-88c5-4e0a-adff-bb6bd6ffe1ed
+
+function integrateStaticArrays(h) #modified from sols
+	u = @SVector [1.0, 0.0]
+	A = @SArray [0.0 -1.0; 1.0 0.0]
+	t_end = 1.0
+
+	t = 0.0
+	inverse = inv(I-h*A)
+	while t < t_end
+		if t + h > t_end
+			h = t_end - t
+			inverse = inv(I-h*A)
+		end
+
+		u = step(u, h, A)
+		t += h
+	end
+
+	return norm(u - exp(A * t_end) * @SVector[1.0,0.0]) 
+end
+
+# ╔═╡ e39d98f8-b107-4602-95e8-08c71d1bedeb
 @benchmark integrate(1.0e-2)
+
+# ╔═╡ 99f6d6bc-cafc-4873-9140-cd010b0d6aee
+@benchmark integrateStaticArrays(1.0e-2)
 
 # ╔═╡ cb809fd8-9e64-4b44-bfb7-f7041ad1073b
 md"👉 Improve the performance of the `integrate` function. You may change as much as you want as long as you keep the same algorithm."
@@ -306,7 +337,7 @@ StaticArrays = "~1.7.0"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.4"
+julia_version = "1.9.3"
 manifest_format = "2.0"
 project_hash = "0e9e8356d5e3cd09706c2f1b670012304a567596"
 
@@ -672,12 +703,12 @@ version = "0.16.1"
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
 uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
-version = "0.6.4"
+version = "0.6.3"
 
 [[deps.LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
-version = "8.4.0+0"
+version = "7.84.0+0"
 
 [[deps.LibGit2]]
 deps = ["Base64", "NetworkOptions", "Printf", "SHA"]
@@ -686,7 +717,7 @@ uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
 [[deps.LibSSH2_jll]]
 deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
 uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
-version = "1.11.0+1"
+version = "1.10.2+0"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -1435,7 +1466,7 @@ version = "1.1.6+0"
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
-version = "1.52.0+1"
+version = "1.48.0+0"
 
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -1497,7 +1528,9 @@ version = "1.4.1+1"
 # ╠═5aa9f671-75f3-4bc9-8ce8-2021d43ca2ef
 # ╠═07d6bb79-d22c-4cec-870e-b15d63903030
 # ╠═7aa1aaed-b56b-4760-b1ff-639309aef4d9
-# ╠═ebe3f8e6-04c0-4e25-8469-e31c6c166a81
+# ╠═8888b885-88c5-4e0a-adff-bb6bd6ffe1ed
+# ╠═e39d98f8-b107-4602-95e8-08c71d1bedeb
+# ╠═99f6d6bc-cafc-4873-9140-cd010b0d6aee
 # ╟─cb809fd8-9e64-4b44-bfb7-f7041ad1073b
 # ╟─ad230f7d-50c3-4b2c-a164-8d241c0566e6
 # ╟─dd84c717-82af-43a5-8c1f-7ed566342a5b
