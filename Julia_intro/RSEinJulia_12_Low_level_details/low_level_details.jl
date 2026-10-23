@@ -165,6 +165,14 @@ md"👉 Use two different accumulators while unrolling the loop with a factor of
 # ╔═╡ ae266741-1af4-4e77-82ff-28f75720bb47
 function sum_naive_unroll2_2accum(x::Vector)
 	# TODO
+	s1 = zero(eltype(x))
+	s2 = zero(eltype(x))
+	@assert iseven(length(x))
+	@inbounds for i in 1:2:length(x)
+		s1 += x[i]
+		s2 += x[i + 1]
+	end
+	return s1 + s2
 end
 
 # ╔═╡ 3f40ea43-fa45-4e06-b66b-74a13a570bfe
@@ -175,7 +183,24 @@ md"👉 Use 3 different accumulators while unrolling the loop with a factor of 3
 
 # ╔═╡ 94d7636b-b8d7-446e-927a-66594e8b2c96
 function sum_naive_unroll3_3accum(x::Vector)
-	# TODO
+	i = 1
+	s1 = zero(eltype(x))
+	s2 = zero(eltype(x))
+	s3 = zero(eltype(x))
+	
+	n = length(x)
+	@inbounds while i + 3 <= n #logic was clear once inbounds was copied over
+		s1 += x[i]
+		s2 += x[i + 1]
+		s3 += x[i + 2]
+		i += 3
+	end
+	s = s1 + s2 + s3
+	@inbounds while i <= n
+		s += x[i]
+		i += 1
+	end
+	return s
 end
 
 # ╔═╡ 46e9ef7c-a7bb-4ab9-aaa8-f44f87c1c6a5
@@ -190,6 +215,26 @@ md"👉 Use 4 different accumulators while unrolling the loop with a factor of 4
 # ╔═╡ 76906ec5-4b13-4ed2-8e9c-f338cdc44d59
 function sum_naive_unroll4_4accum(x::Vector)
 	# TODO
+	i = 1
+	s1 = zero(eltype(x))
+	s2 = zero(eltype(x))
+	s3 = zero(eltype(x))
+	s4 = zero(eltype(x))
+	
+	n = length(x)
+	@inbounds while i + 4 <= n #logic was clear once inbounds was copied over
+		s1 += x[i]
+		s2 += x[i + 1]
+		s3 += x[i + 2]
+		s4 += x[i+3]
+		i += 4
+	end
+	s = s1 + s2 + s3 + s4
+	@inbounds while i <= n
+		s += x[i]
+		i += 1
+	end
+	return s
 end
 
 # ╔═╡ ede36dca-84ad-40f5-ab80-fc2adcbd0654
@@ -277,7 +322,7 @@ PlutoUI = "~0.7.54"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.4"
+julia_version = "1.9.3"
 manifest_format = "2.0"
 project_hash = "d3bd4a9079a0186db33333c1c3662f6cf3f741f8"
 
@@ -854,12 +899,12 @@ version = "0.3.1"
 [[deps.LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
 uuid = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
-version = "0.6.4"
+version = "0.6.3"
 
 [[deps.LibCURL_jll]]
 deps = ["Artifacts", "LibSSH2_jll", "Libdl", "MbedTLS_jll", "Zlib_jll", "nghttp2_jll"]
 uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
-version = "8.4.0+0"
+version = "7.84.0+0"
 
 [[deps.LibGit2]]
 deps = ["Base64", "NetworkOptions", "Printf", "SHA"]
@@ -868,7 +913,7 @@ uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
 [[deps.LibSSH2_jll]]
 deps = ["Artifacts", "Libdl", "MbedTLS_jll"]
 uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
-version = "1.11.0+1"
+version = "1.10.2+0"
 
 [[deps.Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -1451,7 +1496,7 @@ version = "1.10.3+0"
 [[deps.nghttp2_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
-version = "1.52.0+1"
+version = "1.48.0+0"
 
 [[deps.p7zip_jll]]
 deps = ["Artifacts", "Libdl"]
