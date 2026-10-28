@@ -1,4 +1,4 @@
-using CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
+#using CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
 using Test, BenchmarkTools
 using Plots
 
@@ -54,8 +54,6 @@ function run_gen_kernel!(output, max_iters, xmin, ymin, zoom) # new pipeline fun
     return nothing
 end
 
-
-
 @test escape_count(0f0, 0f0, 100) == 100
 @test escape_count(-1f0, 0f0, 100) == 100
 @test escape_count(3f0, 0f0, 100) == 1
@@ -82,8 +80,6 @@ KernelAbstractions.synchronize(gpu_backend)
 @test Array(counts_gpu) == counts_cpu
 println("GPU matches CPU reference.")
 
-
-
 #benchmarking
 N = 512
 mit = 100
@@ -92,6 +88,8 @@ cpu_output = zeros(Int,N,N) #init with N, thus func doesn't require N since we c
 gpu_output = CUDA.zeros(Int,N,N)
 
 stan_runtime = mandelbrot_cpu(N,mit,xmin,ymin,zoom)
+
+
 run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
 run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
 
@@ -102,6 +100,5 @@ run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
 @test Array(cpu_output) == stan_runtime
 println("GPU and CPU kernels match standard single-thread CPU runtime.")
 
-
-p = heatmap(counts; aspect_ratio=:equal, color=:inferno,xlabel="Column",ylabel="Row",title="Mandel iter counts")
+p = heatmap(stan_runtime; aspect_ratio=:equal, color=:inferno,xlabel="Column",ylabel="Row",title="Mandel iter counts")
 savefig(p, "mandelbrot.png")
