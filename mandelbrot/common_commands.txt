@@ -1,0 +1,17 @@
+ssh gkharris@orcd-login.mit.edu									#ssh into orcd with my email
+salloc -p mit_normal_gpu -G l40s:1 -c 4 --mem=8G -t 01:00:00					#request normal_gpU (typically LS40) for one hour
+squeue --me -o "%.12i %.10T %.12M %.12L"							#displays job ID, state, elapsed time, and time left
+
+hostname
+nvidia-smi											#check current node and GPU
+
+module load julia
+cd ~/julialab/mandelbrot
+julia --project=.										#start Julia in project on allocated compute node
+
+julia --project=. gpu_test.jl									#example running script of gpu_test.jl
+
+scancel JOBID											#cancel specific job (check syntax?)
+
+scp gkharris@orcd-login.mit.edu:~/julialab/mandelbrot/gpu_test.jl C:\julialab\mandelbrot\ 	#download example with gpu_test.jl
+scp C:\julialab\mandelbrot\gpu_test.jl gkharris@orcd-login.mit.edu:~/julialab/mandelbrot/ 	#upload example....
