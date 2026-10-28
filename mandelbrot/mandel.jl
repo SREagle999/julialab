@@ -1,4 +1,4 @@
-#using CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
+using CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
 using Test, BenchmarkTools
 using Plots
 
