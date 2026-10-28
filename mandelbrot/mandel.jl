@@ -37,7 +37,7 @@ function mandelbrot_cpu(N, max_iters, xmin, ymin, zoom)
 end
 
 @kernel function mandelbrot_kernel!(counts, max_iters, xmin, ymin, zoom) #note that we mutate counts in place, where it was initialized to a zero matrix for perf
-    row, col = @index(Global, NTuple)
+    row, col = @index(Global, NTuple)                         # each is its own work item
     N = size(counts, 1)
     cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # copy-paste
     cy = ymin + (Float32(row - 1) / Float32(N)) * zoom
