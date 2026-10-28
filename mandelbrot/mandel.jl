@@ -1,4 +1,5 @@
-using Test, CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
+using CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
+using Test, BenchmarkTools
 
 #backend = KernelAbstractions.get_backend( #= FILL =#)
 
@@ -44,6 +45,14 @@ end
     counts[row,col] = escape_count(cx,cy,max_iters)
 end
 
+function run_gen_kernel(output, max_iters, xmin, ymin, zoom) # new pipeline func
+    backend = KernelAbstractions.get_backend(output)
+    mandelbrot_kernel!(backend,(8,8))(output,max_iters, xmin, ymin, zoom; ndrange=size(output))
+    KernelAbstractions.synchronize(backend)
+
+    return nothing
+end
+
 
 
 @test escape_count(0f0, 0f0, 100) == 100
@@ -67,13 +76,24 @@ println("CPU image tests passed.")
 
 counts_gpu = CUDA.zeros(Int, 32, 32)
 gpu_backend = KernelAbstractions.get_backend(counts_gpu)
-
-mandelbrot_kernel!(gpu_backend, (8, 8))(
-    counts_gpu, 100, -2f0, -1.5f0, 3f0;
-    ndrange=size(counts_gpu)
-)
-
+mandelbrot_kernel!(gpu_backend, (8, 8))(counts_gpu, 100, -2f0, -1.5f0, 3f0; ndrange=size(counts_gpu)) #kernel call
 KernelAbstractions.synchronize(gpu_backend)
-
 @test Array(counts_gpu) == counts_cpu
 println("GPU matches CPU reference.")
+
+
+
+#benchmarking
+N = 512
+mit = 100
+xmin, ymin, zoom = -2f0, -1.5f0, 3f0
+cpu_output = zeros(Int,N,N) #init with N, thus func doesn't require N since we can just take size(counts) for range
+gpu_output = CUDA.zeros(Int,N,N)
+
+mandelbrot_cpu(N,mit,xmin,ymin,zoom)
+run_kernel!(cpu_output,mit,xmin,ymin,zoom)
+run_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
+
+@btime mandelbrot_cpu(N,mit,xmin,ymin,zoom)
+@btime run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
+@btime run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom)
