@@ -1,5 +1,6 @@
 using CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
 using Test, BenchmarkTools
+using Plots
 
 #backend = KernelAbstractions.get_backend( #= FILL =#)
 
@@ -97,6 +98,10 @@ run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
 @btime mandelbrot_cpu(N,mit,xmin,ymin,zoom)
 @btime run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
 @btime run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom)
-
 @test Array(gpu_output) == stan_runtime
 @test Array(cpu_output) == stan_runtime
+println("GPU and CPU kernels match standard single-thread CPU runtime.")
+
+
+p = heatmap(counts; aspect_ratio=:equal, color=:inferno,xlabel="Column",ylabel="Row",title="Mandel iter counts")
+savefig(p, "mandelbrot.png")
