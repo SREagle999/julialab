@@ -1,6 +1,6 @@
 using Test, CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
 
-backend = KernelAbstractions.get_backend( #= FILL =#)
+#backend = KernelAbstractions.get_backend( #= FILL =#)
 
 function escape_count(cx::Float32, cy::Float32, max_iters::Int)
     x2 = 0f0
@@ -36,8 +36,6 @@ function mandelbrot_cpu(N, max_iters, xmin, ymin, zoom)
     return counts
 end
 
-println("CPU image tests passed.")
-
 @kernel function mandelbrot_kernel!(counts, max_iters, xmin, ymin, zoom)
     row, col = @index(Global, NTuple)
     N = size(counts, 1)
@@ -46,7 +44,7 @@ println("CPU image tests passed.")
     counts[row,col] = escape_count(cx,cy,max_iters)
 end
 
-#=
+
 
 @test escape_count(0f0, 0f0, 100) == 100
 @test escape_count(-1f0, 0f0, 100) == 100
@@ -58,13 +56,24 @@ println("First-round single-point tests passed.")
 @test escape_count(2f0, 0f0, 100) == 2
 println("Second-round single-point tests passed.")
 
-
-counts = mandelbrot_cpu(32, 100, -2f0, -1.5f0, 3f0)
-println(size(counts))
-println(extrema(counts))
-@test size(counts) == (32, 32)
-@test all(c -> 0 <= c <= 100, counts)
+counts_cpu = mandelbrot_cpu(32, 100, -2f0, -1.5f0, 3f0)
+println(size(counts_cpu))
+println(extrema(counts_cpu))
+@test size(counts_cpu) == (32, 32)
+@test all(c -> 0 <= c <= 100, counts_cpu)
 # For this window, row 17 / column 17 represents c = -0.5 + 0im.
-@test counts[17, 17] == 100
+@test counts_cpu[17, 17] == 100
+println("CPU image tests passed.")
 
-=#
+counts_gpu = CUDA.zeros(Int, 32, 32)
+gpu_backend = KernelAbstractions.get_backend(counts_gpu)
+
+mandelbrot_kernel!(gpu_backend, (8, 8))(
+    counts_gpu, 100, -2f0, -1.5f0, 3f0;
+    ndrange=size(counts_gpu)
+)
+
+KernelAbstractions.synchronize(gpu_backend)
+
+@test Array(counts_gpu) == counts_cpu
+println("GPU matches CPU reference.")
