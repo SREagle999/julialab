@@ -4,7 +4,7 @@ using Plots
 
 #backend = KernelAbstractions.get_backend( #= FILL =#)
 
-function escape_count(cx::Float32, cy::Float32, max_iters::Int)
+function mandel_scalar(cx::Float32, cy::Float32, max_iters::Int)
     x2 = 0f0
     y2 = 0f0
     w = 0f0
@@ -12,7 +12,7 @@ function escape_count(cx::Float32, cy::Float32, max_iters::Int)
 
     while (iters < max_iters && x2 + y2 <= 4f0)
         x = x2 - y2 + cx
-        y = w - (x2 + y2) + cy      #both follow from math
+        y = w - (x2 + y2) + cy      #both follow from math + lab precode instruction :D
 
         x2 = x * x
         y2 = y * y
@@ -31,7 +31,7 @@ function mandelbrot_cpu(N, max_iters, xmin, ymin, zoom)
         for row in 1:N
             cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # 1. Calculate cx using col.
             cy = ymin + (Float32(row - 1) / Float32(N)) * zoom        # 2. Calculate cy using row.
-            counts[row,col] = escape_count(cx,cy,max_iters)        # 3. Store the escape count in counts[row, col].
+            counts[row,col] = mandel_scalar(cx,cy,max_iters)        # 3. Store the escape count in counts[row, col].
         end
     end
 
@@ -43,7 +43,7 @@ end
     N = size(counts, 1)
     cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # copy-paste
     cy = ymin + (Float32(row - 1) / Float32(N)) * zoom
-    counts[row,col] = escape_count(cx,cy,max_iters)
+    counts[row,col] = mandel_scalar(cx,cy,max_iters)
 end
 
 function run_gen_kernel!(output, max_iters, xmin, ymin, zoom) # new pipeline func
@@ -54,14 +54,13 @@ function run_gen_kernel!(output, max_iters, xmin, ymin, zoom) # new pipeline fun
     return nothing
 end
 
-@test escape_count(0f0, 0f0, 100) == 100
-@test escape_count(-1f0, 0f0, 100) == 100
-@test escape_count(3f0, 0f0, 100) == 1
+@test mandel_scalar(0f0, 0f0, 100) == 100
+@test mandel_scalar(-1f0, 0f0, 100) == 100
+@test mandel_scalar(3f0, 0f0, 100) == 1
 println("First-round single-point tests passed.")
 
-
-@test escape_count(0f0, 0f0, 0) == 0
-@test escape_count(2f0, 0f0, 100) == 2
+@test mandel_scalar(0f0, 0f0, 0) == 0
+@test mandel_scalar(2f0, 0f0, 100) == 2
 println("Second-round single-point tests passed.")
 
 counts_cpu = mandelbrot_cpu(32, 100, -2f0, -1.5f0, 3f0)
@@ -86,13 +85,9 @@ mit = 100
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
 cpu_output = zeros(Int,N,N) #init with N, thus func doesn't require N since we can just take size(counts) for range
 gpu_output = CUDA.zeros(Int,N,N)
-
 stan_runtime = mandelbrot_cpu(N,mit,xmin,ymin,zoom)
-
-
 run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
 run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
-
 @btime mandelbrot_cpu(N,mit,xmin,ymin,zoom)
 @btime run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
 @btime run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom)
@@ -100,5 +95,7 @@ run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
 @test Array(cpu_output) == stan_runtime
 println("GPU and CPU kernels match standard single-thread CPU runtime.")
 
+#=
 p = heatmap(stan_runtime; aspect_ratio=:equal, color=:inferno,xlabel="Column",ylabel="Row",title="Mandel iter counts")
 savefig(p, "mandelbrot.png")
+=#
