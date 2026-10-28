@@ -26,19 +26,17 @@ end
 
 function mandelbrot_cpu(N, max_iters, xmin, ymin, zoom)
     counts = zeros(Int, N, N)
-
     for col in 1:N
         for row in 1:N
-            cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # 1. Calculate cx using col.
-            cy = ymin + (Float32(row - 1) / Float32(N)) * zoom        # 2. Calculate cy using row.
-            counts[row,col] = mandel_scalar(cx,cy,max_iters)        # 3. Store the escape count in counts[row, col].
+            cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # calculate cx using col.
+            cy = ymin + (Float32(row - 1) / Float32(N)) * zoom        # calculate cy via row.
+            counts[row,col] = mandel_scalar(cx,cy,max_iters)        # store the count for spec indexed in counts[row, col].
         end
     end
-
     return counts
 end
 
-@kernel function mandelbrot_kernel!(counts, max_iters, xmin, ymin, zoom)
+@kernel function mandelbrot_kernel!(counts, max_iters, xmin, ymin, zoom) #note that we mutate counts in place, where it was initialized to a zero matrix for perf
     row, col = @index(Global, NTuple)
     N = size(counts, 1)
     cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # copy-paste
@@ -50,8 +48,6 @@ function run_gen_kernel!(output, max_iters, xmin, ymin, zoom) # new pipeline fun
     backend = KernelAbstractions.get_backend(output)
     mandelbrot_kernel!(backend,(8,8))(output,max_iters, xmin, ymin, zoom; ndrange=size(output))
     KernelAbstractions.synchronize(backend)
-
-    return nothing
 end
 
 @test mandel_scalar(0f0, 0f0, 100) == 100
