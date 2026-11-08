@@ -85,9 +85,9 @@ println("GPU matches CPU reference.")
 
 
 #benchmarking
-N = 512
+#N = 512
 mit = 100
-N = 2048
+N = 8192
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
 cpu_output = zeros(Int,N,N) #init with N, thus func doesn't require N since we can just take size(counts) for range
 gpu_output = CUDA.zeros(Int,N,N)

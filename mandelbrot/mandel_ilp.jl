@@ -1,97 +1,164 @@
-sing CUDA, KernelAbstractions #we'll be building with CUDA, but the whole idea is that this generalizes
+using CUDA, KernelAbstractions
 using Test, BenchmarkTools
-using Plots
 
-#backend = KernelAbstractions.get_backend( #= FILL =#)
-
-# naive vers
-#=
-function naive_escape_count(cx::Float32, cy::Float32, max_iters::Int)
+function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int)
     x2 = 0f0
     y2 = 0f0
     w = 0f0
     iters::Int = 0
     while (iters < max_iters && x2 + y2 <= 4f0)
         x = x2 - y2 + cx
-        y = w - (x2 + y2) + cy      #both follow from math
+        y = w - (x2 + y2) + cy
         x2 = x * x
         y2 = y * y
         w = (x + y) * (x + y)
-        
         iters += 1
     end
     return iters
 end
 
-function naive_mandelbrot_cpu_single(N, max_iters, xmin, ymin, zoom)
-    counts = zeros(Int, N, N)
-    for col in 1:N
-        for row in 1:N
-            cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # 1. Calculate cx using col.
-            cy = ymin + (Float32(row - 1) / Float32(N)) * zoom        # 2. Calculate cy using row.
-            counts[row,col] = escape_count(cx,cy,max_iters)        # 3. Store the escape count in counts[row, col].
+function ilptwo_it_count(cx1::Float32, cy1::Float32, cx2::Float32, cy2::Float32, max_iters::Int)
+    x2_1, y2_1, w1 = 0f0, 0f0, 0f0
+    iters1 = 0
+    x2_2, y2_2, w2 = 0f0, 0f0, 0f0
+    iters2 = 0
+
+    on1 = true
+    on2 = true
+    while on1 || on2
+        on1 = (iters1 < max_iters && x2_1 + y2_1 <= 4f0)
+        on2 = (iters2 < max_iters && x2_2 + y2_2 <= 4f0)
+        if on1
+            x1 = x2_1 - y2_1 + cx1
+            y1 = w1 - (x2_1 + y2_1) + cy1
+            x2_1 = x1 * x1
+            y2_1 = y1 * y1
+            w1 = (x1 + y1) * (x1 + y1)
+            iters1 += 1
+        end
+        if on2
+            x2 = x2_2 - y2_2 + cx2
+            y2 = w2 - (x2_2 + y2_2) + cy2
+            x2_2 = x2 * x2
+            y2_2 = y2 * y2
+            w2 = (x2 + y2) * (x2 + y2)
+            iters2 += 1
         end
     end
-    return counts
+    return iters1, iters2
 end
 
-@kernel function naive_mandelbrot_kernel!(counts, max_iters, xmin, ymin, zoom)
+# ILP, writes straight to global memory
+@kernel function twoilp_naive_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+    trow, col = @index(Global, NTuple)
+    N = size(counts, 1)
+
+    row1 = 2 * trow - 1
+    row2 = row1 + 1
+    cx  = xmin + (Float32(col - 1) / Float32(N)) * zoom
+    cy1 = ymin + (Float32(row1 - 1) / Float32(N)) * zoom
+    cy2 = ymin + (Float32(row2 - 1) / Float32(N)) * zoom
+    count1, count2 = ilptwo_it_count(cx, cy1, cx, cy2, max_iters)
+
+    if row1 <= N
+        counts[row1, col] = count1
+    end
+    if row2 <= N
+        counts[row2, col] = count2
+    end
+end
+
+# ILP, stages results through a local-memory tile
+@kernel function twoilp_shared_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+    trow, col = @index(Global, NTuple)
+    local_row, local_col = @index(Local, NTuple)
+    N = size(counts, 1)
+    tile = @localmem Int (8, 8, 2)
+
+    row1 = 2 * trow - 1
+    row2 = row1 + 1
+    cx  = xmin + (Float32(col - 1) / Float32(N)) * zoom
+    cy1 = ymin + (Float32(row1 - 1) / Float32(N)) * zoom
+    cy2 = ymin + (Float32(row2 - 1) / Float32(N)) * zoom
+    count1, count2 = ilptwo_it_count(cx, cy1, cx, cy2, max_iters)
+
+    tile[local_row, local_col, 1] = count1
+    tile[local_row, local_col, 2] = count2
+    @synchronize
+
+    if row1 <= N
+        counts[row1, col] = tile[local_row, local_col, 1]
+    end
+    if row2 <= N
+        counts[row2, col] = tile[local_row, local_col, 2]
+    end
+end
+
+# LEGACY SINGLE/NON-ILP
+@kernel function nonilp_kernel!(counts, max_iters, xmin, ymin, zoom)
     row, col = @index(Global, NTuple)
     N = size(counts, 1)
-    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom        # copy-paste
+    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom
     cy = ymin + (Float32(row - 1) / Float32(N)) * zoom
-    counts[row,col] = escape_count(cx,cy,max_iters)
+    counts[row, col] = nonilp_it_count(cx, cy, max_iters)
 end
 
-function naive_run_gen_kernel!(output, max_iters, xmin, ymin, zoom) # new pipeline func
+# RUNNERS
+function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    mandelbrot_kernel!(backend,(8,8))(output,max_iters, xmin, ymin, zoom; ndrange=size(output))
+    nonilp_kernel!(backend, (8, 8))(output, max_iters, xmin, ymin, zoom; ndrange=size(output))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
-=#
-# artifact testing
-#=
-@test escape_count(0f0, 0f0, 100) == 100
-@test escape_count(-1f0, 0f0, 100) == 100
-@test escape_count(3f0, 0f0, 100) == 1
-println("First-round single-point tests passed.")
-#
-@test escape_count(0f0, 0f0, 0) == 0
-@test escape_count(2f0, 0f0, 100) == 2
-println("Second-round single-point tests passed.")
-#
-counts_cpu = mandelbrot_cpu(32, 100, -2f0, -1.5f0, 3f0)
-println(size(counts_cpu))
-println(extrema(counts_cpu))
-@test size(counts_cpu) == (32, 32)
-@test all(c -> 0 <= c <= 100, counts_cpu)
-# For this window, row 17 / column 17 represents c = -0.5 + 0im.
-@test counts_cpu[17, 17] == 100
-println("CPU image tests passed.")
-#
-counts_gpu = CUDA.zeros(Int, 32, 32)
-gpu_backend = KernelAbstractions.get_backend(counts_gpu)
-mandelbrot_kernel!(gpu_backend, (8, 8))(counts_gpu, 100, -2f0, -1.5f0, 3f0; ndrange=size(counts_gpu)) #kernel call
-KernelAbstractions.synchronize(gpu_backend)
-@test Array(counts_gpu) == counts_cpu
-println("GPU matches CPU reference.")
-#
-#benchmarking
-N = 512
+
+# one runner for both ILP kernels: each thread handles 2 rows
+function run_ilp_kernel!(kernel, output, max_iters, xmin, ymin, zoom)
+    backend = KernelAbstractions.get_backend(output)
+    N = size(output, 1)
+    kernel(backend, (8, 8))(output, max_iters, xmin, ymin, zoom;
+                            ndrange=(cld(N, 2), size(output, 2)))
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
+run_naive_ilp!(o, m, x, y, z)  = run_ilp_kernel!(twoilp_naive_mandel_ker!,  o, m, x, y, z)
+run_shared_ilp!(o, m, x, y, z) = run_ilp_kernel!(twoilp_shared_mandel_ker!, o, m, x, y, z)
+
+# TESTING SUITE
+N = 8192
 mit = 100
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
-cpu_output = zeros(Int,N,N) #init with N, thus func doesn't require N since we can just take size(counts) for range
-gpu_output = CUDA.zeros(Int,N,N)
-#
-stan_runtime = mandelbrot_cpu(N,mit,xmin,ymin,zoom)
-run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
-run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom) #compile/warmup run first
-#
-@btime mandelbrot_cpu(N,mit,xmin,ymin,zoom)
-@btime run_gen_kernel!(cpu_output,mit,xmin,ymin,zoom)
-@btime run_gen_kernel!(gpu_output,mit,xmin,ymin,zoom)
-@test Array(gpu_output) == stan_runtime
-@test Array(cpu_output) == stan_runtime
-println("GPU and CPU kernels match standard single-thread CPU runtime.")
-=#
+
+original_output   = CUDA.zeros(Int, N, N)
+naive_ilp_output  = CUDA.zeros(Int, N, N)
+shared_ilp_output = CUDA.zeros(Int, N, N)
+
+# Warm up (compiles all three kernels)
+run_single_kernel!(original_output,   mit, xmin, ymin, zoom)
+run_naive_ilp!(naive_ilp_output,      mit, xmin, ymin, zoom)
+run_shared_ilp!(shared_ilp_output,    mit, xmin, ymin, zoom)
+
+# Correctness
+@test Array(naive_ilp_output)  == Array(original_output)
+@test Array(shared_ilp_output) == Array(original_output)
+
+# Benchmarks
+println("Original: one pixel per thread")
+original_trial = @benchmark run_single_kernel!(
+    $original_output, $mit, $xmin, $ymin, $zoom)
+
+println("ILP naive: two pixels per thread, direct stores")
+naive_trial = @benchmark run_naive_ilp!(
+    $naive_ilp_output, $mit, $xmin, $ymin, $zoom)
+
+println("ILP shared: two pixels per thread, local-memory tile")
+shared_trial = @benchmark run_shared_ilp!(
+    $shared_ilp_output, $mit, $xmin, $ymin, $zoom)
+
+display(original_trial)
+display(naive_trial)
+display(shared_trial)
+
+t0 = median(original_trial).time
+println("Naive ILP speedup:  ", round(t0 / median(naive_trial).time;  digits=2), "×")
+println("Shared ILP speedup: ", round(t0 / median(shared_trial).time; digits=2), "×")
