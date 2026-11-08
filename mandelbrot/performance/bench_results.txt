@@ -1,0 +1,68 @@
+# 2026-11-08T17:58:41.773   N=8192 mit=1000 WG=(32, 8)
+== original
+BenchmarkTools.Trial: 941 samples with 1 evaluation per sample.
+ Range (min … max):  5.246 ms …  5.384 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     5.323 ms              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   5.315 ms ± 18.960 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
+
+                    ▁▅▃▁▁      ▁       ▅█▅▂                   
+  ▅█▁▁▄▁▁▁▁▁▁▁▁▁▁▁▁▅█████▇▄▅▄▇▆█▇▆▄▅▁▅██████▆▄▅▅▄▄▁▁▁▁▁▁▁▄▆█ ▇
+  5.25 ms      Histogram: log(frequency) by time     5.36 ms <
+
+ Memory estimate: 1.30 KiB, allocs estimate: 45.
+
+== ilp_naive
+BenchmarkTools.Trial: 841 samples with 1 evaluation per sample.
+ Range (min … max):  5.886 ms …  6.032 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     5.944 ms              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   5.950 ms ± 27.385 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
+
+                      ▄▅▅▅█▄            ▁▂▅▂                  
+  ▁▂▂▅▄▃▄▃▂▂▃▂▁▂▂▂▃▃▇████████▇▆▅▃▃▂▃▂▃▅▅████▅▆▅▃▃▂▂▂▁▁▂▂▂▂▁▂ ▃
+  5.89 ms        Histogram: frequency by time        6.02 ms <
+
+ Memory estimate: 1.30 KiB, allocs estimate: 45.
+
+== ilp_shared
+BenchmarkTools.Trial: 835 samples with 1 evaluation per sample.
+ Range (min … max):  5.906 ms …  6.109 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     5.993 ms              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   5.995 ms ± 35.617 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
+
+               ▃▆▅▆▃▂▁      ▁██▇▆▆▃        ▂▄▅▄▅▃             
+  ▃▃▁▂▁▃▃▃▁▂▄▃████████▆▃▄▄▄▇████████▆▅▃▃▆▆▇██████▆▄▄▄▁▂▃▂▂▁▃ ▅
+  5.91 ms        Histogram: frequency by time        6.08 ms <
+
+ Memory estimate: 1.30 KiB, allocs estimate: 45.
+
+== ilp_cols
+BenchmarkTools.Trial: 844 samples with 1 evaluation per sample.
+ Range (min … max):  5.853 ms …  6.018 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     5.916 ms              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   5.924 ms ± 27.559 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
+
+                    ▄▅▇█▅▆▁▂          ▂▄▁▇▂▃                  
+  ▃▃▃▃▃▂▄▄▄▁▄▁▃▃▁▄▅▅████████▇▅▅▃▄▄▃▃▆▆██████▇▇▅▅▄▄▄▃▂▁▁▁▂▂▂▃ ▄
+  5.85 ms        Histogram: frequency by time        5.99 ms <
+
+ Memory estimate: 1.30 KiB, allocs estimate: 45.
+
+== ilp_cols4
+BenchmarkTools.Trial: 844 samples with 1 evaluation per sample.
+ Range (min … max):  5.830 ms …  6.048 ms  ┊ GC (min … max): 0.00% … 0.00%
+ Time  (median):     5.930 ms              ┊ GC (median):    0.00%
+ Time  (mean ± σ):   5.928 ms ± 41.675 μs  ┊ GC (mean ± σ):  0.00% ± 0.00%
+
+           ▁       ▁ ▄▆▃▁▆▁▃▆  ▃▆█▇▆▅▅▄▃▁▅▂    ▁ ▁            
+  ▁▁▂▁▂▃▃█▅█▆▇▇█▆▅▅█▇████████▇█████████████▇▅▆▇█▆█▅█▇▇▅▂▃▄▂▃ ▅
+  5.83 ms        Histogram: frequency by time        6.02 ms <
+
+ Memory estimate: 1.30 KiB, allocs estimate: 45.
+
+== Speedup vs original
+original                    1.0×
+ilp_naive                   0.895×
+ilp_shared                  0.888×
+ilp_cols                    0.9×
+ilp_cols4                   0.898×
+

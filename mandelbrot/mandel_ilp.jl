@@ -51,6 +51,49 @@ function ilptwo_it_count(cx1::Float32, cy1::Float32, cx2::Float32, cy2::Float32,
     return iters1, iters2
 end
 
+# one Mandelbrot step for one pixel; returns the new (x2, y2, w)
+@inline function mandel_step(x2, y2, w, cx, cy)
+    x = x2 - y2 + cx
+    y = w - (x2 + y2) + cy
+    return x * x, y * y, (x + y) * (x + y)
+end
+
+# four independent pixels advanced in the same loop
+function ilpfour_it_count(cxa::Float32, cya::Float32, cxb::Float32, cyb::Float32,
+                          cxc::Float32, cyc::Float32, cxd::Float32, cyd::Float32,
+                          max_iters::Int)
+    xa2, ya2, wa = 0f0, 0f0, 0f0
+    xb2, yb2, wb = 0f0, 0f0, 0f0
+    xc2, yc2, wc = 0f0, 0f0, 0f0
+    xd2, yd2, wd = 0f0, 0f0, 0f0
+    ia = ib = ic = id = 0
+
+    ona = onb = onc = ond = true
+    while ona || onb || onc || ond
+        ona = ia < max_iters && xa2 + ya2 <= 4f0
+        onb = ib < max_iters && xb2 + yb2 <= 4f0
+        onc = ic < max_iters && xc2 + yc2 <= 4f0
+        ond = id < max_iters && xd2 + yd2 <= 4f0
+        if ona
+            xa2, ya2, wa = mandel_step(xa2, ya2, wa, cxa, cya)
+            ia += 1
+        end
+        if onb
+            xb2, yb2, wb = mandel_step(xb2, yb2, wb, cxb, cyb)
+            ib += 1
+        end
+        if onc
+            xc2, yc2, wc = mandel_step(xc2, yc2, wc, cxc, cyc)
+            ic += 1
+        end
+        if ond
+            xd2, yd2, wd = mandel_step(xd2, yd2, wd, cxd, cyd)
+            id += 1
+        end
+    end
+    return ia, ib, ic, id
+end
+
 # ILP over row pairs, direct stores
 @kernel function twoilp_naive_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     trow, col = @index(Global, NTuple)
@@ -118,6 +161,37 @@ end
     end
 end
 
+# ILP over 4 adjacent columns per thread
+@kernel function fourilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+    row, tcol = @index(Global, NTuple)
+    N = size(counts, 1)
+    ncols = size(counts, 2)
+
+    colA = 4 * tcol - 3
+    colB = colA + 1
+    colC = colA + 2
+    colD = colA + 3
+    cy  = ymin + (Float32(row - 1)  / Float32(N)) * zoom
+    cxa = xmin + (Float32(colA - 1) / Float32(N)) * zoom
+    cxb = xmin + (Float32(colB - 1) / Float32(N)) * zoom
+    cxc = xmin + (Float32(colC - 1) / Float32(N)) * zoom
+    cxd = xmin + (Float32(colD - 1) / Float32(N)) * zoom
+    ca, cb, cc, cd = ilpfour_it_count(cxa, cy, cxb, cy, cxc, cy, cxd, cy, max_iters)
+
+    if colA <= ncols
+        counts[row, colA] = ca % eltype(counts)
+    end
+    if colB <= ncols
+        counts[row, colB] = cb % eltype(counts)
+    end
+    if colC <= ncols
+        counts[row, colC] = cc % eltype(counts)
+    end
+    if colD <= ncols
+        counts[row, colD] = cd % eltype(counts)
+    end
+end
+
 # LEGACY SINGLE/NON-ILP
 @kernel function nonilp_kernel!(counts, max_iters, xmin, ymin, zoom)
     row, col = @index(Global, NTuple)
@@ -153,6 +227,15 @@ function run_cols_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     twoilp_cols_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
         ndrange=(size(output, 1), cld(size(output, 2), 2)))
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
+# column-paired ILP, 4 pixels per thread
+function run_cols4_ilp!(output, max_iters, xmin, ymin, zoom)
+    backend = KernelAbstractions.get_backend(output)
+    fourilp_cols_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+        ndrange=(size(output, 1), cld(size(output, 2), 4)))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
@@ -203,17 +286,20 @@ original_output   = CUDA.zeros(Int32, N, N)
 naive_ilp_output  = CUDA.zeros(Int32, N, N)
 shared_ilp_output = CUDA.zeros(Int32, N, N)
 cols_ilp_output   = CUDA.zeros(Int32, N, N)
+cols4_ilp_output  = CUDA.zeros(Int32, N, N)
 
-# Warm up (compiles all four kernels)
+# Warm up (compiles all five kernels)
 run_single_kernel!(original_output,   mit, xmin, ymin, zoom)
 run_naive_ilp!(naive_ilp_output,      mit, xmin, ymin, zoom)
 run_shared_ilp!(shared_ilp_output,    mit, xmin, ymin, zoom)
 run_cols_ilp!(cols_ilp_output,        mit, xmin, ymin, zoom)
+run_cols4_ilp!(cols4_ilp_output,      mit, xmin, ymin, zoom)
 
 # Correctness
 @test Array(naive_ilp_output)  == Array(original_output)
 @test Array(shared_ilp_output) == Array(original_output)
 @test Array(cols_ilp_output)   == Array(original_output)
+@test Array(cols4_ilp_output)  == Array(original_output)
 
 # Benchmarks
 println("Original: one pixel per thread")
@@ -232,15 +318,21 @@ println("ILP cols: two column-pixels per thread, coalesced stores")
 cols_trial = @benchmark run_cols_ilp!(
     $cols_ilp_output, $mit, $xmin, $ymin, $zoom)
 
+println("ILP cols4: four column-pixels per thread")
+cols4_trial = @benchmark run_cols4_ilp!(
+    $cols4_ilp_output, $mit, $xmin, $ymin, $zoom)
+
 display(original_trial)
 display(naive_trial)
 display(shared_trial)
 display(cols_trial)
+display(cols4_trial)
 
 t0 = median(original_trial).time
 println("Naive ILP speedup:  ", round(t0 / median(naive_trial).time;  digits=2), "×")
 println("Shared ILP speedup: ", round(t0 / median(shared_trial).time; digits=2), "×")
 println("Cols ILP speedup:   ", round(t0 / median(cols_trial).time;   digits=2), "×")
+println("Cols4 ILP speedup:  ", round(t0 / median(cols4_trial).time;  digits=2), "×")
 
 # Save results
 results = [
@@ -248,7 +340,11 @@ results = [
     "ilp_naive"  => naive_trial,
     "ilp_shared" => shared_trial,
     "ilp_cols"   => cols_trial,
+    "ilp_cols4"  => cols4_trial,
 ]
-save_results("bench_results.txt", results; baseline = "original",
+outdir = "performance"
+mkpath(outdir)
+save_results(joinpath(outdir, "bench_results.txt"), results; baseline = "original",
              extra = "N=$N mit=$mit WG=$WG")
-save_csv("bench_results.csv", results; baseline = "original")
+save_csv(joinpath(outdir, "bench_results.csv"), results; baseline = "original")
+println("Saved results to ", abspath(outdir))
