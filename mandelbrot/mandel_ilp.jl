@@ -126,7 +126,7 @@ run_shared_ilp!(o, m, x, y, z) = run_ilp_kernel!(twoilp_shared_mandel_ker!, o, m
 
 # TESTING SUITE
 N = 8192
-mit = 100
+mit = 1000  
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
 
 original_output   = CUDA.zeros(Int, N, N)
