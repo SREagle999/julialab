@@ -94,7 +94,7 @@ function ilpfour_it_count(cxa::Float32, cya::Float32, cxb::Float32, cyb::Float32
     return ia, ib, ic, id
 end
 
-# ILP over row pairs, direct stores
+# ilp via rows, twopix
 @kernel function twoilp_naive_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     trow, col = @index(Global, NTuple)
     N = size(counts, 1)
@@ -140,8 +140,7 @@ end
     end
 end
 
-# ILP over column pairs: a warp's threads vary along rows (the fast index in
-# column-major storage), so stores stay contiguous
+# ilp via cols (forgot that this is how Julia stores data contiguously)
 @kernel function twoilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     row, tcol = @index(Global, NTuple)
     N = size(counts, 1)
@@ -161,7 +160,7 @@ end
     end
 end
 
-# ILP over 4 adjacent columns per thread
+# same cols method but with 4pixs
 @kernel function fourilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     row, tcol = @index(Global, NTuple)
     N = size(counts, 1)
@@ -201,7 +200,7 @@ end
     counts[row, col] = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
 end
 
-# RUNNERS
+# RUNNERS/WRAPPERS
 function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     nonilp_kernel!(backend, WG)(output, max_iters, xmin, ymin, zoom; ndrange=size(output))
@@ -209,7 +208,7 @@ function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     return nothing
 end
 
-# row-paired ILP: each thread handles 2 rows
+# row-paired ILP st each thread handles 2 rows
 function run_ilp_kernel!(kernel, output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N = size(output, 1)
@@ -222,7 +221,7 @@ end
 run_naive_ilp!(o, m, x, y, z)  = run_ilp_kernel!(twoilp_naive_mandel_ker!,  o, m, x, y, z)
 run_shared_ilp!(o, m, x, y, z) = run_ilp_kernel!(twoilp_shared_mandel_ker!, o, m, x, y, z)
 
-# column-paired ILP: each thread handles 2 columns
+# column-paired ILP, where each thread handles 2 columns
 function run_cols_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     twoilp_cols_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
@@ -334,7 +333,7 @@ println("Shared ILP speedup: ", round(t0 / median(shared_trial).time; digits=2),
 println("Cols ILP speedup:   ", round(t0 / median(cols_trial).time;   digits=2), "×")
 println("Cols4 ILP speedup:  ", round(t0 / median(cols4_trial).time;  digits=2), "×")
 
-# Save results
+# Save results <--- ChatGPT (!!)
 results = [
     "original"   => original_trial,
     "ilp_naive"  => naive_trial,
