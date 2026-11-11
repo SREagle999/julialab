@@ -2,8 +2,7 @@ using CUDA, KernelAbstractions
 using Test, BenchmarkTools, Statistics
 using Dates
 
-const WG = (32, 8)   # workgroup size; the shared tile below must match (32, 8, 2)
-
+const WG = (32, 8) #this might be wrong
 function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int)
     x2 = 0f0
     y2 = 0f0
