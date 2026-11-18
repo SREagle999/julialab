@@ -4,11 +4,11 @@ using Dates
 
 const WG = (32, 8)   # workgroup size; the shared tile below must match (32, 8, 2)
 
-function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int)
+function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int32)
     x2 = 0f0
     y2 = 0f0
     w = 0f0
-    iters::Int = 0
+    iters::Int32 = 0
     while (iters < max_iters && x2 + y2 <= 4f0)
         x = x2 - y2 + cx
         y = w - (x2 + y2) + cy
@@ -20,7 +20,22 @@ function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int)
     return iters
 end
 
-function ilptwo_it_count(cx1::Float32, cy1::Float32, cx2::Float32, cy2::Float32, max_iters::Int)
+#=function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int32)
+    x2, y2, w = 0f0, 0f0, 0f0
+    iters = 0
+    for i in 1:max_iters
+        x2 + y2 > 4f0 && break
+        x = x2 - y2 + cx
+        y = w - (x2 + y2) + cy
+        x2 = x * x
+        y2 = y * y
+        w = (x + y) * (x + y)
+        iters += 1
+    end
+    return iters
+end=#
+
+function ilptwo_it_count(cx1::Float32, cy1::Float32, cx2::Float32, cy2::Float32, max_iters::Int32)
     x2_1, y2_1, w1 = 0f0, 0f0, 0f0
     iters1 = 0
     x2_2, y2_2, w2 = 0f0, 0f0, 0f0
@@ -61,7 +76,7 @@ end
 # four independent pixels advanced in the same loop
 function ilpfour_it_count(cxa::Float32, cya::Float32, cxb::Float32, cyb::Float32,
                           cxc::Float32, cyc::Float32, cxd::Float32, cyd::Float32,
-                          max_iters::Int)
+                          max_iters::Int32)
     xa2, ya2, wa = 0f0, 0f0, 0f0
     xb2, yb2, wb = 0f0, 0f0, 0f0
     xc2, yc2, wc = 0f0, 0f0, 0f0
@@ -120,7 +135,7 @@ end
     trow, col = @index(Global, NTuple)
     local_row, local_col = @index(Local, NTuple)
     N = size(counts, 1)
-    tile = @localmem Int (32, 8, 2)
+    tile = @localmem Int32 (32, 8, 2)
 
     row1 = 2 * trow - 1
     row2 = row1 + 1
@@ -279,7 +294,50 @@ function run_symmetric!(output, max_iters, xmin, ymin, zoom)
     return nothing
 end
 
+@kernel function symmetric_fourilp_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+    trow, tcol = @index(Global, NTuple)
+    N = size(counts, 1)
+    ncols = size(counts, 2)
 
+    row    = trow + 1
+    mirror = N + 2 - row
+
+    colA = 4 * tcol - 3
+    colB = colA + 1
+    colC = colA + 2
+    colD = colA + 3
+
+    cy  = ymin + (Float32(row  - 1) / Float32(N)) * zoom
+    cxa = xmin + (Float32(colA - 1) / Float32(N)) * zoom
+    cxb = xmin + (Float32(colB - 1) / Float32(N)) * zoom
+    cxc = xmin + (Float32(colC - 1) / Float32(N)) * zoom
+    cxd = xmin + (Float32(colD - 1) / Float32(N)) * zoom
+
+    ca, cb, cc, cd = ilpfour_it_count(cxa, cy, cxb, cy, cxc, cy, cxd, cy, max_iters)
+
+    if colA <= ncols; counts[row, colA] = ca % eltype(counts); end
+    if colB <= ncols; counts[row, colB] = cb % eltype(counts); end
+    if colC <= ncols; counts[row, colC] = cc % eltype(counts); end
+    if colD <= ncols; counts[row, colD] = cd % eltype(counts); end
+
+    if mirror != row   # skip the self-paired center row
+        if colA <= ncols; counts[mirror, colA] = ca % eltype(counts); end
+        if colB <= ncols; counts[mirror, colB] = cb % eltype(counts); end
+        if colC <= ncols; counts[mirror, colC] = cc % eltype(counts); end
+        if colD <= ncols; counts[mirror, colD] = cd % eltype(counts); end
+    end
+end
+
+function run_symmetric_cols4!(output, max_iters, xmin, ymin, zoom)
+    backend = KernelAbstractions.get_backend(output)
+    N, ncols = size(output, 1), size(output, 2)
+    edge_row_mandel_ker!(backend, 32)(output, max_iters, xmin, ymin, zoom;
+                                       ndrange = ncols)
+    symmetric_fourilp_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+                                       ndrange = (cld(N - 1, 2), cld(ncols, 4)))
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
 
 
 # RESULT WRITERS
@@ -324,38 +382,44 @@ N = 1024
 mit = 2000
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
 
+# Outputs
 original_output   = CUDA.zeros(Int32, N, N)
-symmetric_output = CUDA.zeros(Int32, N, N)
+cols4_ilp_output   = CUDA.zeros(Int32, N, N)
+symmetric_output   = CUDA.zeros(Int32, N, N)
+symcols4_output    = CUDA.zeros(Int32, N, N)
 
-# Warm up (compiles all five kernels)
-run_single_kernel!(original_output,   mit, xmin, ymin, zoom)
-run_symmetric!(symmetric_output, mit, xmin, ymin, zoom)
+# Warm up
+run_single_kernel!(original_output, mit, xmin, ymin, zoom)
+run_cols4_ilp!(cols4_ilp_output,    mit, xmin, ymin, zoom)
+run_symmetric!(symmetric_output,    mit, xmin, ymin, zoom)
+run_symmetric_cols4!(symcols4_output, mit, xmin, ymin, zoom)
+
+# Correctness
+@test Array(cols4_ilp_output)  == Array(original_output)
+@test Array(symcols4_output)[2:513, :] == Array(cols4_ilp_output)[2:513, :]
+@test Array(symcols4_output)[2:513, :] == Array(symcols4_output)[end:-1:513, :]
+
 # Benchmarks
-println("Original: one pixel per thread")
-original_trial = @benchmark run_single_kernel!(
-    $original_output, $mit, $xmin, $ymin, $zoom)
-println("Symmetric: row + mirror row, reused count")
-symmetric_trial = @benchmark run_symmetric!(
-    $symmetric_output, $mit, $xmin, $ymin, $zoom)
+original_trial  = @benchmark run_single_kernel!($original_output, $mit, $xmin, $ymin, $zoom)
+cols4_trial     = @benchmark run_cols4_ilp!($cols4_ilp_output, $mit, $xmin, $ymin, $zoom)
+symmetric_trial = @benchmark run_symmetric!($symmetric_output, $mit, $xmin, $ymin, $zoom)
+symcols4_trial  = @benchmark run_symmetric_cols4!($symcols4_output, $mit, $xmin, $ymin, $zoom)
 
+t0 = median(original_trial).time
+for (name, trial) in [("original", original_trial), ("cols4_ilp", cols4_trial),
+                       ("symmetric", symmetric_trial), ("symmetric+cols4", symcols4_trial)]
+    println(rpad(name, 20), round(median(trial).time / 1e3, digits=3), " μs   ",
+            round(t0 / median(trial).time, digits=2), "×")
+end
 
-display(original_trial)
-display(symmetric_trial)
-
-@test Array(symmetric_output) == Array(original_output)
-#t0 = median(original_trial).times
-
-println("Symmetric speedup: ", round(median(original_trial).time / median(symmetric_trial).time; digits=2), "×")
-
-
-# Save results
 results = [
-    "original"   => original_trial,
-    "symmetric"  => symmetric_trial
+    "original"        => original_trial,
+    "cols4_ilp"        => cols4_trial,
+    "symmetric"        => symmetric_trial,
+    "symmetric_cols4"  => symcols4_trial,
 ]
 outdir = "performance"
 mkpath(outdir)
 save_results(joinpath(outdir, "bench_results.txt"), results; baseline = "original",
              extra = "N=$N mit=$mit WG=$WG")
 save_csv(joinpath(outdir, "bench_results.csv"), results; baseline = "original")
-println("Saved results to ", abspath(outdir))
