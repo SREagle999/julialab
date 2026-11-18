@@ -2,7 +2,8 @@ using CUDA, KernelAbstractions
 using Test, BenchmarkTools, Statistics
 using Dates
 
-const WG = (32, 8) #this might be wrong
+const WG = (32, 8)   # workgroup size; the shared tile below must match (32, 8, 2)
+
 function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int)
     x2 = 0f0
     y2 = 0f0
@@ -93,7 +94,7 @@ function ilpfour_it_count(cxa::Float32, cya::Float32, cxb::Float32, cyb::Float32
     return ia, ib, ic, id
 end
 
-# ilp via rows, twopix
+# ILP over row pairs, direct stores
 @kernel function twoilp_naive_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     trow, col = @index(Global, NTuple)
     N = size(counts, 1)
@@ -113,6 +114,7 @@ end
     end
 end
 
+#=
 # ILP over row pairs, results staged through a local-memory tile
 @kernel function twoilp_shared_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     trow, col = @index(Global, NTuple)
@@ -138,8 +140,9 @@ end
         counts[row2, col] = tile[local_row, local_col, 2] % eltype(counts)
     end
 end
-
-# ilp via cols (forgot that this is how Julia stores data contiguously)
+=#
+# ILP over column pairs: a warp's threads vary along rows (the fast index in
+# column-major storage), so stores stay contiguous
 @kernel function twoilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     row, tcol = @index(Global, NTuple)
     N = size(counts, 1)
@@ -159,7 +162,7 @@ end
     end
 end
 
-# same cols method but with 4pixs
+# ILP over 4 adjacent columns per thread
 @kernel function fourilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     row, tcol = @index(Global, NTuple)
     N = size(counts, 1)
@@ -199,7 +202,7 @@ end
     counts[row, col] = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
 end
 
-# RUNNERS/WRAPPERS
+# RUNNERS
 function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     nonilp_kernel!(backend, WG)(output, max_iters, xmin, ymin, zoom; ndrange=size(output))
@@ -207,7 +210,7 @@ function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     return nothing
 end
 
-# row-paired ILP st each thread handles 2 rows
+# row-paired ILP: each thread handles 2 rows
 function run_ilp_kernel!(kernel, output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N = size(output, 1)
@@ -220,7 +223,7 @@ end
 run_naive_ilp!(o, m, x, y, z)  = run_ilp_kernel!(twoilp_naive_mandel_ker!,  o, m, x, y, z)
 run_shared_ilp!(o, m, x, y, z) = run_ilp_kernel!(twoilp_shared_mandel_ker!, o, m, x, y, z)
 
-# column-paired ILP, where each thread handles 2 columns
+# column-paired ILP: each thread handles 2 columns
 function run_cols_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     twoilp_cols_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
@@ -237,6 +240,47 @@ function run_cols4_ilp!(output, max_iters, xmin, ymin, zoom)
     KernelAbstractions.synchronize(backend)
     return nothing
 end
+
+
+
+@kernel function symmetric_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+    trow, col = @index(Global, NTuple)
+    N = size(counts, 1)
+
+    row = trow + 1
+    mirror = N + 2 - row
+
+    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom
+    cy = ymin + (Float32(row  - 1) / Float32(N)) * zoom
+
+    count = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
+    counts[row, col] = count
+    if mirror != row
+        counts[mirror, col] = count
+    end
+end
+
+# the one leftover row with no valid mirror — fill it the normal way
+@kernel function edge_row_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+    col = @index(Global, Linear)
+    N = size(counts, 1)
+    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom
+    counts[1, col] = nonilp_it_count(cx, ymin, max_iters) % eltype(counts)
+end
+
+function run_symmetric!(output, max_iters, xmin, ymin, zoom)
+    backend = KernelAbstractions.get_backend(output)
+    N = size(output, 1)
+    edge_row_mandel_ker!(backend, 32)(output, max_iters, xmin, ymin, zoom;
+                                       ndrange = size(output, 2))
+    symmetric_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+                                       ndrange = (cld(N - 1, 2), size(output, 2)))
+    KernelAbstractions.synchronize(backend)
+    return nothing
+end
+
+
+
 
 # RESULT WRITERS
 function report(io::IO, name, trial)
@@ -275,27 +319,39 @@ function save_csv(path::AbstractString, results; baseline = first(first(results)
     return path
 end
 
-# TESTING SUITE
+# the ChatGPT TESTING SUITE
 N = 1024
 mit = 2000
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
 
 original_output   = CUDA.zeros(Int32, N, N)
+symmetric_output = CUDA.zeros(Int32, N, N)
 
 # Warm up (compiles all five kernels)
 run_single_kernel!(original_output,   mit, xmin, ymin, zoom)
+run_symmetric!(symmetric_output, mit, xmin, ymin, zoom)
 # Benchmarks
 println("Original: one pixel per thread")
 original_trial = @benchmark run_single_kernel!(
     $original_output, $mit, $xmin, $ymin, $zoom)
+println("Symmetric: row + mirror row, reused count")
+symmetric_trial = @benchmark run_symmetric!(
+    $symmetric_output, $mit, $xmin, $ymin, $zoom)
+
 
 display(original_trial)
+display(symmetric_trial)
 
-t0 = median(original_trial).times
+@test Array(symmetric_output) == Array(original_output)
+#t0 = median(original_trial).times
 
-# Save results <--- ChatGPT (!!)
+println("Symmetric speedup: ", round(median(original_trial).time / median(symmetric_trial).time; digits=2), "×")
+
+
+# Save results
 results = [
-    "original"   => original_trial
+    "original"   => original_trial,
+    "symmetric"  => symmetric_trial
 ]
 outdir = "performance"
 mkpath(outdir)
