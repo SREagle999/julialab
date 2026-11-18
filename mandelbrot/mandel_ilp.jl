@@ -278,69 +278,26 @@ function save_csv(path::AbstractString, results; baseline = first(first(results)
 end
 
 # TESTING SUITE
-N = 8192
-mit = 1000
+N = 1024
+mit = 2000
 xmin, ymin, zoom = -2f0, -1.5f0, 3f0
 
 original_output   = CUDA.zeros(Int32, N, N)
-naive_ilp_output  = CUDA.zeros(Int32, N, N)
-shared_ilp_output = CUDA.zeros(Int32, N, N)
-cols_ilp_output   = CUDA.zeros(Int32, N, N)
-cols4_ilp_output  = CUDA.zeros(Int32, N, N)
 
 # Warm up (compiles all five kernels)
 run_single_kernel!(original_output,   mit, xmin, ymin, zoom)
-run_naive_ilp!(naive_ilp_output,      mit, xmin, ymin, zoom)
-run_shared_ilp!(shared_ilp_output,    mit, xmin, ymin, zoom)
-run_cols_ilp!(cols_ilp_output,        mit, xmin, ymin, zoom)
-run_cols4_ilp!(cols4_ilp_output,      mit, xmin, ymin, zoom)
-
-# Correctness
-@test Array(naive_ilp_output)  == Array(original_output)
-@test Array(shared_ilp_output) == Array(original_output)
-@test Array(cols_ilp_output)   == Array(original_output)
-@test Array(cols4_ilp_output)  == Array(original_output)
-
 # Benchmarks
 println("Original: one pixel per thread")
 original_trial = @benchmark run_single_kernel!(
     $original_output, $mit, $xmin, $ymin, $zoom)
 
-println("ILP naive: two row-pixels per thread, direct stores")
-naive_trial = @benchmark run_naive_ilp!(
-    $naive_ilp_output, $mit, $xmin, $ymin, $zoom)
-
-println("ILP shared: two row-pixels per thread, local-memory tile")
-shared_trial = @benchmark run_shared_ilp!(
-    $shared_ilp_output, $mit, $xmin, $ymin, $zoom)
-
-println("ILP cols: two column-pixels per thread, coalesced stores")
-cols_trial = @benchmark run_cols_ilp!(
-    $cols_ilp_output, $mit, $xmin, $ymin, $zoom)
-
-println("ILP cols4: four column-pixels per thread")
-cols4_trial = @benchmark run_cols4_ilp!(
-    $cols4_ilp_output, $mit, $xmin, $ymin, $zoom)
-
 display(original_trial)
-display(naive_trial)
-display(shared_trial)
-display(cols_trial)
-display(cols4_trial)
 
-t0 = median(original_trial).time
-println("Naive ILP speedup:  ", round(t0 / median(naive_trial).time;  digits=2), "×")
-println("Shared ILP speedup: ", round(t0 / median(shared_trial).time; digits=2), "×")
-println("Cols ILP speedup:   ", round(t0 / median(cols_trial).time;   digits=2), "×")
-println("Cols4 ILP speedup:  ", round(t0 / median(cols4_trial).time;  digits=2), "×")
+t0 = median(original_trial).times
 
 # Save results
 results = [
-    "original"   => original_trial,
-    "ilp_naive"  => naive_trial,
-    "ilp_shared" => shared_trial,
-    "ilp_cols"   => cols_trial,
-    "ilp_cols4"  => cols4_trial,
+    "original"   => original_trial
 ]
 outdir = "performance"
 mkpath(outdir)
