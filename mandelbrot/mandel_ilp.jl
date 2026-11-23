@@ -2,7 +2,7 @@ using CUDA, KernelAbstractions
 using Test, BenchmarkTools, Statistics
 using Dates
 
-const WG = (32, 8)   # workgroup size is 2D since ditching local mem
+const WG = (8,32)   # workgroup size is 2D since ditching local mem
 
 @inline function mandel_step(x, y, y2, cx, cy) # muladd vers cheapens
     x_new  = muladd(x, x, cx - y2)
@@ -13,9 +13,9 @@ const WG = (32, 8)   # workgroup size is 2D since ditching local mem
 end
 
 function nonilp_it_count(cx, cy, max_iters)
-    x, y, y2, total = 0f0, 0f0, 0f0, 0f0
+    x, y, y2, total = 0,0,0,0
     iters = 0
-    while (iters < max_iters && total <= 4f0)
+    while (iters < max_iters && total <= 4)
         x, y, y2, total = mandel_step(x, y, y2, cx, cy)
         iters += 1
     end
@@ -23,16 +23,16 @@ function nonilp_it_count(cx, cy, max_iters)
 end
 
 function ilptwo_it_count(cxa, cya, cxb, cyb, max_iters)
-    xa, ya, ya2, ta = 0f0, 0f0, 0f0, 0f0
+    xa, ya, ya2, ta = 0, 0, 0, 0
     itersa = 0
-    xb, yb, yb2, tb = 0f0, 0f0, 0f0, 0f0
+    xb, yb, yb2, tb = 0, 0, 0, 0
     itersb = 0
 
     ona = true
     onb = true
     while ona || onb
-        ona = itersa < max_iters && ta <= 4f0
-        onb = itersb < max_iters && tb <= 4f0
+        ona = itersa < max_iters && ta <= 4
+        onb = itersb < max_iters && tb <= 4
         if ona
             xa, ya, ya2, ta = mandel_step(xa, ya, ya2, cxa, cya)
             itersa += 1
@@ -49,18 +49,18 @@ end
 function ilpfour_it_count(cxa, cya, cxb, cyb,
                           cxc, cyc, cxd, cyd,
                           max_iters)
-    xa, ya, ya2, ta = 0f0, 0f0, 0f0, 0f0
-    xb, yb, yb2, tb = 0f0, 0f0, 0f0, 0f0
-    xc, yc, yc2, tc = 0f0, 0f0, 0f0, 0f0
-    xd, yd, yd2, td = 0f0, 0f0, 0f0, 0f0
+    xa, ya, ya2, ta = 0, 0, 0, 0
+    xb, yb, yb2, tb = 0, 0, 0, 0
+    xc, yc, yc2, tc = 0, 0, 0, 0
+    xd, yd, yd2, td = 0, 0, 0, 0
     ia = ib = ic = id = 0
 
     ona = onb = onc = ond = true
     while ona || onb || onc || ond
-        ona = ia < max_iters && ta <= 4f0
-        onb = ib < max_iters && tb <= 4f0
-        onc = ic < max_iters && tc <= 4f0
-        ond = id < max_iters && td <= 4f0
+        ona = ia < max_iters && ta <= 4
+        onb = ib < max_iters && tb <= 4
+        onc = ic < max_iters && tc <= 4
+        ond = id < max_iters && td <= 4
         if ona
             xa, ya, ya2, ta = mandel_step(xa, ya, ya2, cxa, cya)
             ia += 1
@@ -115,9 +115,9 @@ end
 
     col1 = 2 * tcol - 1
     col2 = col1 + 1
-    cy  = ymin + (Float32(row - 1)  / Float32(N)) * zoom
-    cx1 = xmin + (Float32(col1 - 1) / Float32(N)) * zoom
-    cx2 = xmin + (Float32(col2 - 1) / Float32(N)) * zoom
+    cy  = ymin + ((row - 1)  / (N)) * zoom
+    cx1 = xmin + ((col1 - 1) / (N)) * zoom
+    cx2 = xmin + ((col2 - 1) / (N)) * zoom
     c1, c2 = ilptwo_it_count(cx1, cy, cx2, cy, max_iters)
 
     if col1 <= size(counts, 2)
@@ -138,11 +138,11 @@ end
     colB = colA + 1
     colC = colA + 2
     colD = colA + 3
-    cy  = ymin + (Float32(row - 1)  / Float32(N)) * zoom
-    cxa = xmin + (Float32(colA - 1) / Float32(N)) * zoom
-    cxb = xmin + (Float32(colB - 1) / Float32(N)) * zoom
-    cxc = xmin + (Float32(colC - 1) / Float32(N)) * zoom
-    cxd = xmin + (Float32(colD - 1) / Float32(N)) * zoom
+    cy  = ymin + ((row - 1)  / (N)) * zoom
+    cxa = xmin + ((colA - 1) / (N)) * zoom
+    cxb = xmin + ((colB - 1) / (N)) * zoom
+    cxc = xmin + ((colC - 1) / (N)) * zoom
+    cxd = xmin + ((colD - 1) / (N)) * zoom
     ca, cb, cc, cd = ilpfour_it_count(cxa, cy, cxb, cy, cxc, cy, cxd, cy, max_iters)
 
     if colA <= ncols
@@ -163,8 +163,8 @@ end
 @kernel function nonilp_kernel!(counts, max_iters, xmin, ymin, zoom)
     row, col = @index(Global, NTuple)
     N = size(counts, 1)
-    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom
-    cy = ymin + (Float32(row - 1) / Float32(N)) * zoom
+    cx = xmin + ((col - 1) / (N)) * zoom
+    cy = ymin + ((row - 1) / (N)) * zoom
     counts[row, col] = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
 end
 
@@ -216,8 +216,8 @@ end
     row = trow + 1
     mirror = N + 2 - row
 
-    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom
-    cy = ymin + (Float32(row  - 1) / Float32(N)) * zoom
+    cx = xmin + ((col - 1) / (N)) * zoom
+    cy = ymin + ((row  - 1) / (N)) * zoom
 
     count = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
     counts[row, col] = count
@@ -230,7 +230,7 @@ end
 @kernel function edge_row_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
     col = @index(Global, Linear)
     N = size(counts, 1)
-    cx = xmin + (Float32(col - 1) / Float32(N)) * zoom
+    cx = xmin + ((col - 1) / (N)) * zoom
     counts[1, col] = nonilp_it_count(cx, ymin, max_iters) % eltype(counts)
 end
 
@@ -258,11 +258,11 @@ end
     colC = colA + 2
     colD = colA + 3
 
-    cy  = ymin + (Float32(row  - 1) / Float32(N)) * zoom
-    cxa = xmin + (Float32(colA - 1) / Float32(N)) * zoom
-    cxb = xmin + (Float32(colB - 1) / Float32(N)) * zoom
-    cxc = xmin + (Float32(colC - 1) / Float32(N)) * zoom
-    cxd = xmin + (Float32(colD - 1) / Float32(N)) * zoom
+    cy  = ymin + ((row  - 1) / (N)) * zoom
+    cxa = xmin + ((colA - 1) / (N)) * zoom
+    cxb = xmin + ((colB - 1) / (N)) * zoom
+    cxc = xmin + ((colC - 1) / (N)) * zoom
+    cxd = xmin + ((colD - 1) / (N)) * zoom
 
     ca, cb, cc, cd = ilpfour_it_count(cxa, cy, cxb, cy, cxc, cy, cxd, cy, max_iters)
 
@@ -346,23 +346,24 @@ symcols4_output    = CUDA.zeros(Int32, N, N)
 # Warm up
 run_single_kernel!(original_output, mit, xmin, ymin, zoom)
 run_cols4_ilp!(cols4_ilp_output,mit, xmin, ymin, zoom)
-run_symmetric!(symmetric_output, mit, xmin, ymin, zoom)
+#run_symmetric!(symmetric_output, mit, xmin, ymin, zoom)
 run_symmetric_cols4!(symcols4_output, mit, xmin, ymin, zoom)
 
 # Correctness
 @test Array(cols4_ilp_output)  == Array(original_output)
-@test Array(symcols4_output)[2:513,:] == Array(cols4_ilp_output)[2:513,:]
+#@test Array(symcols4_output)[2:513,:] == Array(cols4_ilp_output)[2:513,:]
 @test Array(symcols4_output)[2:513,:] == Array(symcols4_output)[end:-1:513,:]
 
 # Benchmarks
-original_trial  = @benchmark run_single_kernel!($original_output, $mit, $xmin, $ymin, $zoom)
+original_trial  = @benchmark run_single_kernel!($original_output, $mit , $xmin, $ymin, $zoom)
 cols4_trial     = @benchmark run_cols4_ilp!($cols4_ilp_output, $mit, $xmin, $ymin, $zoom)
-symmetric_trial = @benchmark run_symmetric!($symmetric_output, $mit, $xmin, $ymin, $zoom)
+#symmetric_trial = @benchmark run_symmetric!($symmetric_output, $mit, $xmin, $ymin, $zoom)
 symcols4_trial  = @benchmark run_symmetric_cols4!($symcols4_output, $mit, $xmin, $ymin, $zoom)
 
 t0 = median(original_trial).time
 for (name, trial) in [("original", original_trial), ("cols4_ilp", cols4_trial),
-                       ("symmetric", symmetric_trial), ("symmetric+cols4", symcols4_trial)]
+                       #("symmetric", symmetric_trial), 
+                       ("symmetric+cols4", symcols4_trial)]
     println(rpad(name, 20), round(median(trial).time / 1e3, digits=3), " μs   ",
             round(t0 / median(trial).time, digits=2), "×")
 end
@@ -370,7 +371,7 @@ end
 results = [
     "original"        => original_trial,
     "cols4_ilp"        => cols4_trial,
-    "symmetric"        => symmetric_trial,
+    #"symmetric"        => symmetric_trial,
     "symmetric_cols4"  => symcols4_trial,
 ]
 outdir = "performance"
