@@ -2,133 +2,84 @@ using CUDA, KernelAbstractions
 using Test, BenchmarkTools, Statistics
 using Dates
 
-const WG = (32, 8)   # workgroup size; the shared tile below must match (32, 8, 2)
+const WG = (32, 8)   # workgroup size is 2D since ditching local mem
 
-function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int32)
-    x2 = 0f0
-    y2 = 0f0
-    w = 0f0
-    iters::Int32 = 0
-    while (iters < max_iters && x2 + y2 <= 4f0)
-        x = x2 - y2 + cx
-        y = w - (x2 + y2) + cy
-        x2 = x * x
-        y2 = y * y
-        w = (x + y) * (x + y)
-        iters += 1
-    end
-    return iters
+@inline function mandel_step(x, y, y2, cx, cy) # muladd vers cheapens
+    x_new  = muladd(x, x, cx - y2)
+    y_new  = muladd(x + x, y, cy)
+    y2_new = y_new * y_new
+    total  = muladd(x_new, x_new, y2_new)
+    return x_new, y_new, y2_new, total
 end
 
-#=function nonilp_it_count(cx::Float32, cy::Float32, max_iters::Int32)
-    x2, y2, w = 0f0, 0f0, 0f0
+function nonilp_it_count(cx, cy, max_iters)
+    x, y, y2, total = 0f0, 0f0, 0f0, 0f0
     iters = 0
-    for i in 1:max_iters
-        x2 + y2 > 4f0 && break
-        x = x2 - y2 + cx
-        y = w - (x2 + y2) + cy
-        x2 = x * x
-        y2 = y * y
-        w = (x + y) * (x + y)
+    while (iters < max_iters && total <= 4f0)
+        x, y, y2, total = mandel_step(x, y, y2, cx, cy)
         iters += 1
     end
     return iters
-end=#
-
-function ilptwo_it_count(cx1::Float32, cy1::Float32, cx2::Float32, cy2::Float32, max_iters::Int32)
-    x2_1, y2_1, w1 = 0f0, 0f0, 0f0
-    iters1 = 0
-    x2_2, y2_2, w2 = 0f0, 0f0, 0f0
-    iters2 = 0
-
-    on1 = true
-    on2 = true
-    while on1 || on2
-        on1 = (iters1 < max_iters && x2_1 + y2_1 <= 4f0)
-        on2 = (iters2 < max_iters && x2_2 + y2_2 <= 4f0)
-        if on1
-            x1 = x2_1 - y2_1 + cx1
-            y1 = w1 - (x2_1 + y2_1) + cy1
-            x2_1 = x1 * x1
-            y2_1 = y1 * y1
-            w1 = (x1 + y1) * (x1 + y1)
-            iters1 += 1
-        end
-        if on2
-            x2 = x2_2 - y2_2 + cx2
-            y2 = w2 - (x2_2 + y2_2) + cy2
-            x2_2 = x2 * x2
-            y2_2 = y2 * y2
-            w2 = (x2 + y2) * (x2 + y2)
-            iters2 += 1
-        end
-    end
-    return iters1, iters2
 end
 
-# one Mandelbrot step for one pixel; returns the new (x2, y2, w)
-@inline function mandel_step(x2, y2, w, cx, cy)
-    x = x2 - y2 + cx
-    y = w - (x2 + y2) + cy
-    return x * x, y * y, (x + y) * (x + y)
+function ilptwo_it_count(cxa, cya, cxb, cyb, max_iters)
+    xa, ya, ya2, ta = 0f0, 0f0, 0f0, 0f0
+    itersa = 0
+    xb, yb, yb2, tb = 0f0, 0f0, 0f0, 0f0
+    itersb = 0
+
+    ona = true
+    onb = true
+    while ona || onb
+        ona = itersa < max_iters && ta <= 4f0
+        onb = itersb < max_iters && tb <= 4f0
+        if ona
+            xa, ya, ya2, ta = mandel_step(xa, ya, ya2, cxa, cya)
+            itersa += 1
+        end
+        if onb
+            xb, yb, yb2, tb = mandel_step(xb, yb, yb2, cxb, cyb)
+            itersb += 1
+        end
+    end
+    return itersa, itersb
 end
 
 # four independent pixels advanced in the same loop
-function ilpfour_it_count(cxa::Float32, cya::Float32, cxb::Float32, cyb::Float32,
-                          cxc::Float32, cyc::Float32, cxd::Float32, cyd::Float32,
-                          max_iters::Int32)
-    xa2, ya2, wa = 0f0, 0f0, 0f0
-    xb2, yb2, wb = 0f0, 0f0, 0f0
-    xc2, yc2, wc = 0f0, 0f0, 0f0
-    xd2, yd2, wd = 0f0, 0f0, 0f0
+function ilpfour_it_count(cxa, cya, cxb, cyb,
+                          cxc, cyc, cxd, cyd,
+                          max_iters)
+    xa, ya, ya2, ta = 0f0, 0f0, 0f0, 0f0
+    xb, yb, yb2, tb = 0f0, 0f0, 0f0, 0f0
+    xc, yc, yc2, tc = 0f0, 0f0, 0f0, 0f0
+    xd, yd, yd2, td = 0f0, 0f0, 0f0, 0f0
     ia = ib = ic = id = 0
 
     ona = onb = onc = ond = true
     while ona || onb || onc || ond
-        ona = ia < max_iters && xa2 + ya2 <= 4f0
-        onb = ib < max_iters && xb2 + yb2 <= 4f0
-        onc = ic < max_iters && xc2 + yc2 <= 4f0
-        ond = id < max_iters && xd2 + yd2 <= 4f0
+        ona = ia < max_iters && ta <= 4f0
+        onb = ib < max_iters && tb <= 4f0
+        onc = ic < max_iters && tc <= 4f0
+        ond = id < max_iters && td <= 4f0
         if ona
-            xa2, ya2, wa = mandel_step(xa2, ya2, wa, cxa, cya)
+            xa, ya, ya2, ta = mandel_step(xa, ya, ya2, cxa, cya)
             ia += 1
         end
         if onb
-            xb2, yb2, wb = mandel_step(xb2, yb2, wb, cxb, cyb)
+            xb, yb, yb2, tb = mandel_step(xb, yb, yb2, cxb, cyb)
             ib += 1
         end
         if onc
-            xc2, yc2, wc = mandel_step(xc2, yc2, wc, cxc, cyc)
+            xc, yc, yc2, tc = mandel_step(xc, yc, yc2, cxc, cyc)
             ic += 1
         end
         if ond
-            xd2, yd2, wd = mandel_step(xd2, yd2, wd, cxd, cyd)
+            xd, yd, yd2, td = mandel_step(xd, yd, yd2, cxd, cyd)
             id += 1
         end
     end
     return ia, ib, ic, id
 end
-
-# ILP over row pairs, direct stores
-@kernel function twoilp_naive_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
-    trow, col = @index(Global, NTuple)
-    N = size(counts, 1)
-
-    row1 = 2 * trow - 1
-    row2 = row1 + 1
-    cx  = xmin + (Float32(col - 1) / Float32(N)) * zoom
-    cy1 = ymin + (Float32(row1 - 1) / Float32(N)) * zoom
-    cy2 = ymin + (Float32(row2 - 1) / Float32(N)) * zoom
-    count1, count2 = ilptwo_it_count(cx, cy1, cx, cy2, max_iters)
-
-    if row1 <= N
-        counts[row1, col] = count1 % eltype(counts)
-    end
-    if row2 <= N
-        counts[row2, col] = count2 % eltype(counts)
-    end
-end
-
 #=
 # ILP over row pairs, results staged through a local-memory tile
 @kernel function twoilp_shared_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
@@ -380,7 +331,11 @@ end
 # the ChatGPT TESTING SUITE
 N = 1024
 mit = 2000
-xmin, ymin, zoom = -2f0, -1.5f0, 3f0
+xmin, ymin, zoom = -2f0, -1.5f0, 1/10000#change zoom to pushed katutorial code vers
+# write new image to verify
+#need to have idle gpu with single laucnh for ilp to make min optimize
+# 
+# compare to normal CUDA matrix mult
 
 # Outputs
 original_output   = CUDA.zeros(Int32, N, N)
@@ -390,14 +345,14 @@ symcols4_output    = CUDA.zeros(Int32, N, N)
 
 # Warm up
 run_single_kernel!(original_output, mit, xmin, ymin, zoom)
-run_cols4_ilp!(cols4_ilp_output,    mit, xmin, ymin, zoom)
-run_symmetric!(symmetric_output,    mit, xmin, ymin, zoom)
+run_cols4_ilp!(cols4_ilp_output,mit, xmin, ymin, zoom)
+run_symmetric!(symmetric_output, mit, xmin, ymin, zoom)
 run_symmetric_cols4!(symcols4_output, mit, xmin, ymin, zoom)
 
 # Correctness
 @test Array(cols4_ilp_output)  == Array(original_output)
-@test Array(symcols4_output)[2:513, :] == Array(cols4_ilp_output)[2:513, :]
-@test Array(symcols4_output)[2:513, :] == Array(symcols4_output)[end:-1:513, :]
+@test Array(symcols4_output)[2:513,:] == Array(cols4_ilp_output)[2:513,:]
+@test Array(symcols4_output)[2:513,:] == Array(symcols4_output)[end:-1:513,:]
 
 # Benchmarks
 original_trial  = @benchmark run_single_kernel!($original_output, $mit, $xmin, $ymin, $zoom)
