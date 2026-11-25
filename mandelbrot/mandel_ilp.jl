@@ -4,13 +4,16 @@ using Dates
 
 const WG = (8,32)
 
-function axis_coords(n::Integer, lo::Float32, zoom::Float32)
+@kernel function fill_axis!(coords, lo, zoom, Nf)
+    i = @index(Global, Linear)
+    coords[i] = lo + ((i - 1) / Nf) * zoom
+end
+
+function axis_coords(backend, n::Integer, lo::Float32, zoom::Float32)
+    coords = KernelAbstractions.allocate(backend, Float32, n)
     Nf = Float32(n)
-    coords = Vector{Float32}(undef, n)
-    for i in 1:n
-        coords[i] = lo + ((i - 1) / Nf) * zoom
-    end
-    return CuArray(coords)
+    fill_axis!(backend, 256)(coords, lo, zoom, Nf; ndrange = n)
+    return coords
 end
 
 @inline function mandel_step(x, y, y2, cx, cy)
@@ -145,8 +148,8 @@ end
 
 function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    xs = axis_coords(size(output, 2), xmin, zoom)
-    ys = axis_coords(size(output, 1), ymin, zoom)
+    xs = axis_coords(backend, size(output, 2), xmin, zoom)
+    ys = axis_coords(backend, size(output, 1), ymin, zoom)
     nonilp_kernel!(backend, WG)(output, max_iters, xs, ys; ndrange=size(output))
     KernelAbstractions.synchronize(backend)
     return nothing
@@ -155,8 +158,8 @@ end
 function run_ilp_kernel!(kernel, output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N = size(output, 1)
-    xs = axis_coords(size(output, 2), xmin, zoom)
-    ys = axis_coords(N, ymin, zoom)
+    xs = axis_coords(backend, size(output, 2), xmin, zoom)
+    ys = axis_coords(backend, N, ymin, zoom)
     kernel(backend, WG)(output, max_iters, xs, ys;
                         ndrange=(cld(N, 2), size(output, 2)))
     KernelAbstractions.synchronize(backend)
@@ -165,8 +168,8 @@ end
 
 function run_cols_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    xs = axis_coords(size(output, 2), xmin, zoom)
-    ys = axis_coords(size(output, 1), ymin, zoom)
+    xs = axis_coords(backend, size(output, 2), xmin, zoom)
+    ys = axis_coords(backend, size(output, 1), ymin, zoom)
     twoilp_cols_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
         ndrange=(size(output, 1), cld(size(output, 2), 2)))
     KernelAbstractions.synchronize(backend)
@@ -175,8 +178,8 @@ end
 
 function run_cols4_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    xs = axis_coords(size(output, 2), xmin, zoom)
-    ys = axis_coords(size(output, 1), ymin, zoom)
+    xs = axis_coords(backend, size(output, 2), xmin, zoom)
+    ys = axis_coords(backend, size(output, 1), ymin, zoom)
     fourilp_cols_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
         ndrange=(size(output, 1), cld(size(output, 2), 4)))
     KernelAbstractions.synchronize(backend)
@@ -209,8 +212,8 @@ end
 function run_symmetric!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N = size(output, 1)
-    xs = axis_coords(size(output, 2), xmin, zoom)
-    ys = axis_coords(N, ymin, zoom)
+    xs = axis_coords(backend, size(output, 2), xmin, zoom)
+    ys = axis_coords(backend, N, ymin, zoom)
     edge_row_mandel_ker!(backend, 32)(output, max_iters, xs, ys;
                                        ndrange = size(output, 2))
     symmetric_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
@@ -256,8 +259,8 @@ end
 function run_symmetric_cols4!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N, ncols = size(output, 1), size(output, 2)
-    xs = axis_coords(ncols, xmin, zoom)
-    ys = axis_coords(N, ymin, zoom)
+    xs = axis_coords(backend, ncols, xmin, zoom)
+    ys = axis_coords(backend, N, ymin, zoom)
     edge_row_mandel_ker!(backend, 32)(output, max_iters, xs, ys;
                                        ndrange = ncols)
     symmetric_fourilp_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
