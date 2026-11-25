@@ -2,9 +2,18 @@ using CUDA, KernelAbstractions
 using Test, BenchmarkTools, Statistics
 using Dates
 
-const WG = (8,32)   # workgroup size is 2D since ditching local mem
+const WG = (8,32)
 
-@inline function mandel_step(x, y, y2, cx, cy) # muladd vers cheapens
+function axis_coords(n::Integer, lo::Float32, zoom::Float32)
+    Nf = Float32(n)
+    coords = Vector{Float32}(undef, n)
+    for i in 1:n
+        coords[i] = lo + ((i - 1) / Nf) * zoom
+    end
+    return CuArray(coords)
+end
+
+@inline function mandel_step(x, y, y2, cx, cy)
     x_new  = muladd(x, x, cx - y2)
     y_new  = muladd(x + x, y, cy)
     y2_new = y_new * y_new
@@ -13,9 +22,9 @@ const WG = (8,32)   # workgroup size is 2D since ditching local mem
 end
 
 function nonilp_it_count(cx, cy, max_iters)
-    x, y, y2, total = 0,0,0,0
+    x, y, y2, total = 0f0, 0f0, 0f0, 0f0
     iters = 0
-    while (iters < max_iters && total <= 4)
+    while (iters < max_iters && total <= 4f0)
         x, y, y2, total = mandel_step(x, y, y2, cx, cy)
         iters += 1
     end
@@ -23,16 +32,16 @@ function nonilp_it_count(cx, cy, max_iters)
 end
 
 function ilptwo_it_count(cxa, cya, cxb, cyb, max_iters)
-    xa, ya, ya2, ta = 0, 0, 0, 0
+    xa, ya, ya2, ta = 0f0, 0f0, 0f0, 0f0
     itersa = 0
-    xb, yb, yb2, tb = 0, 0, 0, 0
+    xb, yb, yb2, tb = 0f0, 0f0, 0f0, 0f0
     itersb = 0
 
     ona = true
     onb = true
     while ona || onb
-        ona = itersa < max_iters && ta <= 4
-        onb = itersb < max_iters && tb <= 4
+        ona = itersa < max_iters && ta <= 4f0
+        onb = itersb < max_iters && tb <= 4f0
         if ona
             xa, ya, ya2, ta = mandel_step(xa, ya, ya2, cxa, cya)
             itersa += 1
@@ -45,22 +54,21 @@ function ilptwo_it_count(cxa, cya, cxb, cyb, max_iters)
     return itersa, itersb
 end
 
-# four independent pixels advanced in the same loop
 function ilpfour_it_count(cxa, cya, cxb, cyb,
                           cxc, cyc, cxd, cyd,
                           max_iters)
-    xa, ya, ya2, ta = 0, 0, 0, 0
-    xb, yb, yb2, tb = 0, 0, 0, 0
-    xc, yc, yc2, tc = 0, 0, 0, 0
-    xd, yd, yd2, td = 0, 0, 0, 0
+    xa, ya, ya2, ta = 0f0, 0f0, 0f0, 0f0
+    xb, yb, yb2, tb = 0f0, 0f0, 0f0, 0f0
+    xc, yc, yc2, tc = 0f0, 0f0, 0f0, 0f0
+    xd, yd, yd2, td = 0f0, 0f0, 0f0, 0f0
     ia = ib = ic = id = 0
 
     ona = onb = onc = ond = true
     while ona || onb || onc || ond
-        ona = ia < max_iters && ta <= 4
-        onb = ib < max_iters && tb <= 4
-        onc = ic < max_iters && tc <= 4
-        ond = id < max_iters && td <= 4
+        ona = ia < max_iters && ta <= 4f0
+        onb = ib < max_iters && tb <= 4f0
+        onc = ic < max_iters && tc <= 4f0
+        ond = id < max_iters && td <= 4f0
         if ona
             xa, ya, ya2, ta = mandel_step(xa, ya, ya2, cxa, cya)
             ia += 1
@@ -80,71 +88,40 @@ function ilpfour_it_count(cxa, cya, cxb, cyb,
     end
     return ia, ib, ic, id
 end
-#=
-# ILP over row pairs, results staged through a local-memory tile
-@kernel function twoilp_shared_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
-    trow, col = @index(Global, NTuple)
-    local_row, local_col = @index(Local, NTuple)
-    N = size(counts, 1)
-    tile = @localmem Int32 (32, 8, 2)
 
-    row1 = 2 * trow - 1
-    row2 = row1 + 1
-    cx  = xmin + (Float32(col - 1) / Float32(N)) * zoom
-    cy1 = ymin + (Float32(row1 - 1) / Float32(N)) * zoom
-    cy2 = ymin + (Float32(row2 - 1) / Float32(N)) * zoom
-    count1, count2 = ilptwo_it_count(cx, cy1, cx, cy2, max_iters)
-
-    tile[local_row, local_col, 1] = count1
-    tile[local_row, local_col, 2] = count2
-    @synchronize
-
-    if row1 <= N
-        counts[row1, col] = tile[local_row, local_col, 1] % eltype(counts)
-    end
-    if row2 <= N
-        counts[row2, col] = tile[local_row, local_col, 2] % eltype(counts)
-    end
-end
-=#
-# ILP over column pairs: a warp's threads vary along rows (the fast index in
-# column-major storage), so stores stay contiguous
-@kernel function twoilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+@kernel function twoilp_cols_mandel_ker!(counts, max_iters, @Const(xs), @Const(ys))
     row, tcol = @index(Global, NTuple)
-    N = size(counts, 1)
+    ncols = size(counts, 2)
 
     col1 = 2 * tcol - 1
     col2 = col1 + 1
-    cy  = ymin + ((row - 1)  / (N)) * zoom
-    cx1 = xmin + ((col1 - 1) / (N)) * zoom
-    cx2 = xmin + ((col2 - 1) / (N)) * zoom
+    cy  = @inbounds ys[row]
+    cx1 = @inbounds xs[min(col1, ncols)]
+    cx2 = @inbounds xs[min(col2, ncols)]
     c1, c2 = ilptwo_it_count(cx1, cy, cx2, cy, max_iters)
 
-    if col1 <= size(counts, 2)
+    if col1 <= ncols
         counts[row, col1] = c1 % eltype(counts)
     end
-    if col2 <= size(counts, 2)
+    if col2 <= ncols
         counts[row, col2] = c2 % eltype(counts)
     end
 end
 
-# ILP over 4 adjacent columns per thread
-@kernel function fourilp_cols_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+@kernel function fourilp_cols_mandel_ker!(counts, max_iters, @Const(xs), @Const(ys))
     row, tcol = @index(Global, NTuple)
-    N = size(counts, 1)
     ncols = size(counts, 2)
 
     colA = 4 * tcol - 3
     colB = colA + 1
     colC = colA + 2
     colD = colA + 3
-    cy  = ymin + ((row - 1)  / (N)) * zoom
-    cxa = xmin + ((colA - 1) / (N)) * zoom
-    cxb = xmin + ((colB - 1) / (N)) * zoom
-    cxc = xmin + ((colC - 1) / (N)) * zoom
-    cxd = xmin + ((colD - 1) / (N)) * zoom
+    cy  = @inbounds ys[row]
+    cxa = @inbounds xs[min(colA, ncols)]
+    cxb = @inbounds xs[min(colB, ncols)]
+    cxc = @inbounds xs[min(colC, ncols)]
+    cxd = @inbounds xs[min(colD, ncols)]
     ca, cb, cc, cd = ilpfour_it_count(cxa, cy, cxb, cy, cxc, cy, cxd, cy, max_iters)
-
     if colA <= ncols
         counts[row, colA] = ca % eltype(counts)
     end
@@ -159,65 +136,62 @@ end
     end
 end
 
-# LEGACY SINGLE/NON-ILP
-@kernel function nonilp_kernel!(counts, max_iters, xmin, ymin, zoom)
+@kernel function nonilp_kernel!(counts, max_iters, @Const(xs), @Const(ys))
     row, col = @index(Global, NTuple)
-    N = size(counts, 1)
-    cx = xmin + ((col - 1) / (N)) * zoom
-    cy = ymin + ((row - 1) / (N)) * zoom
+    cx = @inbounds xs[col]
+    cy = @inbounds ys[row]
     counts[row, col] = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
 end
 
-# RUNNERS
 function run_single_kernel!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    nonilp_kernel!(backend, WG)(output, max_iters, xmin, ymin, zoom; ndrange=size(output))
+    xs = axis_coords(size(output, 2), xmin, zoom)
+    ys = axis_coords(size(output, 1), ymin, zoom)
+    nonilp_kernel!(backend, WG)(output, max_iters, xs, ys; ndrange=size(output))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
 
-# row-paired ILP: each thread handles 2 rows
 function run_ilp_kernel!(kernel, output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N = size(output, 1)
-    kernel(backend, WG)(output, max_iters, xmin, ymin, zoom;
+    xs = axis_coords(size(output, 2), xmin, zoom)
+    ys = axis_coords(N, ymin, zoom)
+    kernel(backend, WG)(output, max_iters, xs, ys;
                         ndrange=(cld(N, 2), size(output, 2)))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
 
-run_naive_ilp!(o, m, x, y, z)  = run_ilp_kernel!(twoilp_naive_mandel_ker!,  o, m, x, y, z)
-run_shared_ilp!(o, m, x, y, z) = run_ilp_kernel!(twoilp_shared_mandel_ker!, o, m, x, y, z)
-
-# column-paired ILP: each thread handles 2 columns
 function run_cols_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    twoilp_cols_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+    xs = axis_coords(size(output, 2), xmin, zoom)
+    ys = axis_coords(size(output, 1), ymin, zoom)
+    twoilp_cols_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
         ndrange=(size(output, 1), cld(size(output, 2), 2)))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
 
-# column-paired ILP, 4 pixels per thread
 function run_cols4_ilp!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
-    fourilp_cols_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+    xs = axis_coords(size(output, 2), xmin, zoom)
+    ys = axis_coords(size(output, 1), ymin, zoom)
+    fourilp_cols_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
         ndrange=(size(output, 1), cld(size(output, 2), 4)))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
 
-
-
-@kernel function symmetric_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+@kernel function symmetric_mandel_ker!(counts, max_iters, @Const(xs), @Const(ys))
     trow, col = @index(Global, NTuple)
     N = size(counts, 1)
 
     row = trow + 1
     mirror = N + 2 - row
 
-    cx = xmin + ((col - 1) / (N)) * zoom
-    cy = ymin + ((row  - 1) / (N)) * zoom
+    cx = @inbounds xs[col]
+    cy = @inbounds ys[min(row, N)]
 
     count = nonilp_it_count(cx, cy, max_iters) % eltype(counts)
     counts[row, col] = count
@@ -226,26 +200,26 @@ end
     end
 end
 
-# the one leftover row with no valid mirror — fill it the normal way
-@kernel function edge_row_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+@kernel function edge_row_mandel_ker!(counts, max_iters, @Const(xs), @Const(ys))
     col = @index(Global, Linear)
-    N = size(counts, 1)
-    cx = xmin + ((col - 1) / (N)) * zoom
-    counts[1, col] = nonilp_it_count(cx, ymin, max_iters) % eltype(counts)
+    cx = @inbounds xs[col]
+    counts[1, col] = nonilp_it_count(cx, ys[1], max_iters) % eltype(counts)
 end
 
 function run_symmetric!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N = size(output, 1)
-    edge_row_mandel_ker!(backend, 32)(output, max_iters, xmin, ymin, zoom;
+    xs = axis_coords(size(output, 2), xmin, zoom)
+    ys = axis_coords(N, ymin, zoom)
+    edge_row_mandel_ker!(backend, 32)(output, max_iters, xs, ys;
                                        ndrange = size(output, 2))
-    symmetric_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+    symmetric_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
                                        ndrange = (cld(N - 1, 2), size(output, 2)))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
 
-@kernel function symmetric_fourilp_mandel_ker!(counts, max_iters, xmin, ymin, zoom)
+@kernel function symmetric_fourilp_mandel_ker!(counts, max_iters, @Const(xs), @Const(ys))
     trow, tcol = @index(Global, NTuple)
     N = size(counts, 1)
     ncols = size(counts, 2)
@@ -258,11 +232,11 @@ end
     colC = colA + 2
     colD = colA + 3
 
-    cy  = ymin + ((row  - 1) / (N)) * zoom
-    cxa = xmin + ((colA - 1) / (N)) * zoom
-    cxb = xmin + ((colB - 1) / (N)) * zoom
-    cxc = xmin + ((colC - 1) / (N)) * zoom
-    cxd = xmin + ((colD - 1) / (N)) * zoom
+    cy  = @inbounds ys[min(row, N)]
+    cxa = @inbounds xs[min(colA, ncols)]
+    cxb = @inbounds xs[min(colB, ncols)]
+    cxc = @inbounds xs[min(colC, ncols)]
+    cxd = @inbounds xs[min(colD, ncols)]
 
     ca, cb, cc, cd = ilpfour_it_count(cxa, cy, cxb, cy, cxc, cy, cxd, cy, max_iters)
 
@@ -271,7 +245,7 @@ end
     if colC <= ncols; counts[row, colC] = cc % eltype(counts); end
     if colD <= ncols; counts[row, colD] = cd % eltype(counts); end
 
-    if mirror != row   # skip the self-paired center row
+    if mirror != row
         if colA <= ncols; counts[mirror, colA] = ca % eltype(counts); end
         if colB <= ncols; counts[mirror, colB] = cb % eltype(counts); end
         if colC <= ncols; counts[mirror, colC] = cc % eltype(counts); end
@@ -282,16 +256,16 @@ end
 function run_symmetric_cols4!(output, max_iters, xmin, ymin, zoom)
     backend = KernelAbstractions.get_backend(output)
     N, ncols = size(output, 1), size(output, 2)
-    edge_row_mandel_ker!(backend, 32)(output, max_iters, xmin, ymin, zoom;
+    xs = axis_coords(ncols, xmin, zoom)
+    ys = axis_coords(N, ymin, zoom)
+    edge_row_mandel_ker!(backend, 32)(output, max_iters, xs, ys;
                                        ndrange = ncols)
-    symmetric_fourilp_mandel_ker!(backend, WG)(output, max_iters, xmin, ymin, zoom;
+    symmetric_fourilp_mandel_ker!(backend, WG)(output, max_iters, xs, ys;
                                        ndrange = (cld(N - 1, 2), cld(ncols, 4)))
     KernelAbstractions.synchronize(backend)
     return nothing
 end
 
-
-# RESULT WRITERS
 function report(io::IO, name, trial)
     println(io, "== ", name)
     show(io, MIME("text/plain"), trial)
@@ -300,15 +274,15 @@ end
 
 function save_results(path::AbstractString, results; baseline = first(first(results)),
                       mode = "w", extra = "")
-    t0 = median(Dict(results)[baseline]).time
+    t0 = minimum(Dict(results)[baseline]).time
     open(path, mode) do io
         println(io, "# ", Dates.now(), "   ", extra)
         for (name, trial) in results
             report(io, name, trial)
         end
-        println(io, "== Speedup vs ", baseline)
+        println(io, "== Speedup vs ", baseline, " (by minimum time)")
         for (name, trial) in results
-            println(io, rpad(name, 28), round(t0 / median(trial).time; digits = 3), "×")
+            println(io, rpad(name, 28), round(t0 / minimum(trial).time; digits = 3), "×")
         end
         println(io)
     end
@@ -316,66 +290,48 @@ function save_results(path::AbstractString, results; baseline = first(first(resu
 end
 
 function save_csv(path::AbstractString, results; baseline = first(first(results)))
-    t0 = median(Dict(results)[baseline]).time
+    t0 = minimum(Dict(results)[baseline]).time
     open(path, "w") do io
         println(io, "name,min_us,median_us,mean_us,max_us,samples,speedup")
         for (name, t) in results
             println(io, join((name, minimum(t).time / 1e3, median(t).time / 1e3,
                               mean(t).time / 1e3, maximum(t).time / 1e3,
-                              length(t.times), t0 / median(t).time), ","))
+                              length(t.times), t0 / minimum(t).time), ","))
         end
     end
     return path
 end
 
-# the ChatGPT TESTING SUITE
 N = 1024
 mit = 2000
-xmin, ymin, zoom = -2f0, -1.5f0, 1/10000#change zoom to pushed katutorial code vers
-# write new image to verify
-#need to have idle gpu with single laucnh for ilp to make min optimize
-# 
-# compare to normal CUDA matrix mult
 
-# Outputs
-original_output   = CUDA.zeros(Int32, N, N)
-cols4_ilp_output   = CUDA.zeros(Int32, N, N)
-symmetric_output   = CUDA.zeros(Int32, N, N)
-symcols4_output    = CUDA.zeros(Int32, N, N)
+zoom = 1f0 / 10000f0
+xmin = -0.743643887f0 - 0.5f0 * zoom
+ymin =  0.131825904f0 - 0.5f0 * zoom
 
-# Warm up
+original_output  = CUDA.zeros(Int32, N, N)
+cols4_ilp_output = CUDA.zeros(Int32, N, N)
+
 run_single_kernel!(original_output, mit, xmin, ymin, zoom)
-run_cols4_ilp!(cols4_ilp_output,mit, xmin, ymin, zoom)
-#run_symmetric!(symmetric_output, mit, xmin, ymin, zoom)
-run_symmetric_cols4!(symcols4_output, mit, xmin, ymin, zoom)
+run_cols4_ilp!(cols4_ilp_output, mit, xmin, ymin, zoom)
 
-# Correctness
-@test Array(cols4_ilp_output)  == Array(original_output)
-#@test Array(symcols4_output)[2:513,:] == Array(cols4_ilp_output)[2:513,:]
-@test Array(symcols4_output)[2:513,:] == Array(symcols4_output)[end:-1:513,:]
+@test Array(cols4_ilp_output) == Array(original_output)
 
-# Benchmarks
-original_trial  = @benchmark run_single_kernel!($original_output, $mit , $xmin, $ymin, $zoom)
-cols4_trial     = @benchmark run_cols4_ilp!($cols4_ilp_output, $mit, $xmin, $ymin, $zoom)
-#symmetric_trial = @benchmark run_symmetric!($symmetric_output, $mit, $xmin, $ymin, $zoom)
-symcols4_trial  = @benchmark run_symmetric_cols4!($symcols4_output, $mit, $xmin, $ymin, $zoom)
+original_trial = @benchmark run_single_kernel!($original_output, $mit, $xmin, $ymin, $zoom)
+cols4_trial    = @benchmark run_cols4_ilp!($cols4_ilp_output, $mit, $xmin, $ymin, $zoom)
 
-t0 = median(original_trial).time
-for (name, trial) in [("original", original_trial), ("cols4_ilp", cols4_trial),
-                       #("symmetric", symmetric_trial), 
-                       ("symmetric+cols4", symcols4_trial)]
-    println(rpad(name, 20), round(median(trial).time / 1e3, digits=3), " μs   ",
-            round(t0 / median(trial).time, digits=2), "×")
+t0 = minimum(original_trial).time
+for (name, trial) in [("original", original_trial), ("cols4_ilp", cols4_trial)]
+    println(rpad(name, 20), round(minimum(trial).time / 1e3, digits=3), " μs   ",
+            round(t0 / minimum(trial).time, digits=2), "×")
 end
 
 results = [
-    "original"        => original_trial,
-    "cols4_ilp"        => cols4_trial,
-    #"symmetric"        => symmetric_trial,
-    "symmetric_cols4"  => symcols4_trial,
+    "original"  => original_trial,
+    "cols4_ilp" => cols4_trial,
 ]
 outdir = "performance"
 mkpath(outdir)
 save_results(joinpath(outdir, "bench_results.txt"), results; baseline = "original",
-             extra = "N=$N mit=$mit WG=$WG")
+             extra = "N=$N mit=$mit WG=$WG xmin=$xmin ymin=$ymin zoom=$zoom")
 save_csv(joinpath(outdir, "bench_results.csv"), results; baseline = "original")
